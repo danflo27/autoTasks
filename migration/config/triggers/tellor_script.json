@@ -1,0 +1,11 @@
+{
+	"tellor_alert": {
+		"name": "Tellor Alert Script",
+		"trigger_type": "script",
+		"config": {
+			"language": "Python",
+			"script_path": "./config/triggers/scripts/alert.py",
+			"timeout_ms": 45000
+		}
+	}
+}
