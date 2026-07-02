@@ -1,0 +1,82 @@
+# Self-hosted OpenZeppelin Monitor for Tellor alerting.
+#
+# The Monitor source lives in a sibling checkout pinned to a release tag:
+#   ../../openzeppelin-monitor  (v1.5.0)
+# This compose file builds the production image from that checkout and mounts
+# the version-controlled configs from THIS repo (./config).
+#
+# Usage (from autoTasks/migration/):
+#   cp .env.example .env   # fill in real values
+#   docker compose build
+#   docker compose up -d
+#   docker compose --profile metrics up -d   # optional Prometheus (:9090) + Grafana (:3000)
+
+services:
+  monitor:
+    # Official prebuilt image, pinned to the same tag as the ../../openzeppelin-monitor
+    # source checkout. To build locally instead (e.g. to add npm deps to the image),
+    # uncomment the build stanza and change the image name to a local one.
+    image: openzeppelin/openzeppelin-monitor:v1.5.0
+    # build:
+    #   context: ../../openzeppelin-monitor
+    #   dockerfile: Dockerfile.production
+    # Secrets referenced as {"type": "environment", ...} in the JSON configs are
+    # resolved from the container environment, so the .env file must be loaded here.
+    env_file:
+      - .env
+    environment:
+      METRICS_PORT: ${METRICS_PORT:-8081}
+      METRICS_ENABLED: ${METRICS_ENABLED:-false}
+      LOG_LEVEL: ${RUST_LOG:-info}
+      LOG_MODE: ${LOG_MODE:-stdout}
+      IN_DOCKER: 'true'
+    restart: on-failure:5
+    security_opt:
+      - no-new-privileges
+    volumes:
+      - ./config:/app/config/:ro
+      # Persist last-processed-block checkpoints across restarts.
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - monitor-network
+      - metrics-network
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    security_opt:
+      - no-new-privileges
+    command: --log.level=warn --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
+      --storage.tsdb.retention.time=30d
+    ports:
+      - 9090:9090/tcp
+    networks:
+      - metrics-network
+      - monitor-network
+    volumes:
+      - ../../openzeppelin-monitor/cmd/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: on-failure:5
+    profiles:
+      - metrics
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    security_opt:
+      - no-new-privileges
+    ports: [3000:3000/tcp]
+    networks:
+      - metrics-network
+      - monitor-network
+    volumes:
+      - ../../openzeppelin-monitor/cmd/prometheus/grafana.ini:/etc/grafana/grafana.ini
+      - ../../openzeppelin-monitor/cmd/prometheus/datasources:/etc/grafana/provisioning/datasources
+      - ../../openzeppelin-monitor/cmd/prometheus/dashboards:/etc/grafana/provisioning/dashboards
+    restart: on-failure:5
+    profiles:
+      - metrics
+
+networks:
+  metrics-network:
+    internal: true
+  monitor-network:
+    driver: bridge
