@@ -1,0 +1,49 @@
+{
+	"name": "Tellor Staking",
+	"paused": true,
+	"networks": ["ethereum_mainnet"],
+	"addresses": [
+		{
+			"address": "0x8cFc184c877154a8F9ffE0fe75649dbe5e2DBEbf",
+			"contract_spec": [
+				{
+					"type": "event",
+					"name": "NewStaker",
+					"anonymous": false,
+					"inputs": [
+						{ "name": "_staker", "type": "address", "indexed": true },
+						{ "name": "_amount", "type": "uint256", "indexed": true }
+					]
+				},
+				{
+					"type": "event",
+					"name": "StakeWithdrawRequested",
+					"anonymous": false,
+					"inputs": [
+						{ "name": "_staker", "type": "address", "indexed": false },
+						{ "name": "_amount", "type": "uint256", "indexed": false }
+					]
+				},
+				{
+					"type": "event",
+					"name": "StakeWithdrawn",
+					"anonymous": false,
+					"inputs": [
+						{ "name": "_staker", "type": "address", "indexed": false }
+					]
+				}
+			]
+		}
+	],
+	"match_conditions": {
+		"functions": [],
+		"events": [
+			{ "signature": "NewStaker(address,uint256)", "expression": null },
+			{ "signature": "StakeWithdrawRequested(address,uint256)", "expression": null },
+			{ "signature": "StakeWithdrawn(address)", "expression": null }
+		],
+		"transactions": []
+	},
+	"trigger_conditions": [],
+	"triggers": ["tellor_alert"]
+}

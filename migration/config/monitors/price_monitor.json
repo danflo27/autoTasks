@@ -1,0 +1,33 @@
+{
+	"name": "Tellor Price Monitor",
+	"paused": true,
+	"networks": ["ethereum_mainnet"],
+	"addresses": [
+		{
+			"address": "0x8cFc184c877154a8F9ffE0fe75649dbe5e2DBEbf",
+			"contract_spec": [
+				{
+					"type": "function",
+					"name": "submitValue",
+					"stateMutability": "nonpayable",
+					"inputs": [
+						{ "name": "_queryId", "type": "bytes32" },
+						{ "name": "_value", "type": "bytes" },
+						{ "name": "_nonce", "type": "uint256" },
+						{ "name": "_queryData", "type": "bytes" }
+					],
+					"outputs": []
+				}
+			]
+		}
+	],
+	"match_conditions": {
+		"functions": [
+			{ "signature": "submitValue(bytes32,bytes,uint256,bytes)", "expression": null }
+		],
+		"events": [],
+		"transactions": [{ "status": "Success", "expression": null }]
+	},
+	"trigger_conditions": [],
+	"triggers": ["tellor_alert"]
+}

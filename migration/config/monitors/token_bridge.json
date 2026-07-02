@@ -1,0 +1,52 @@
+{
+	"name": "Tellor Token Bridge",
+	"paused": true,
+	"networks": ["ethereum_mainnet"],
+	"addresses": [
+		{
+			"address": "0x5589e306b1920F009979a50B88caE32aecD471E4",
+			"contract_spec": [
+				{
+					"type": "function",
+					"name": "addStakingRewards",
+					"stateMutability": "nonpayable",
+					"inputs": [{ "name": "_amount", "type": "uint256" }],
+					"outputs": []
+				},
+				{
+					"type": "function",
+					"name": "claimExtraWithdraw",
+					"stateMutability": "nonpayable",
+					"inputs": [{ "name": "_recipient", "type": "address" }],
+					"outputs": []
+				},
+				{
+					"type": "function",
+					"name": "pauseBridge",
+					"stateMutability": "nonpayable",
+					"inputs": [],
+					"outputs": []
+				},
+				{
+					"type": "function",
+					"name": "unpauseBridge",
+					"stateMutability": "nonpayable",
+					"inputs": [],
+					"outputs": []
+				}
+			]
+		}
+	],
+	"match_conditions": {
+		"functions": [
+			{ "signature": "addStakingRewards(uint256)", "expression": null },
+			{ "signature": "claimExtraWithdraw(address)", "expression": null },
+			{ "signature": "pauseBridge()", "expression": null },
+			{ "signature": "unpauseBridge()", "expression": null }
+		],
+		"events": [],
+		"transactions": [{ "status": "Success", "expression": null }]
+	},
+	"trigger_conditions": [],
+	"triggers": ["tellor_alert"]
+}

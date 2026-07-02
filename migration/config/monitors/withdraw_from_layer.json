@@ -1,0 +1,32 @@
+{
+	"name": "Tellor Withdraw From Layer",
+	"paused": true,
+	"networks": ["ethereum_mainnet"],
+	"addresses": [
+		{
+			"address": "0x5589e306b1920F009979a50B88caE32aecD471E4",
+			"contract_spec": [
+				{
+					"type": "event",
+					"name": "Withdraw",
+					"anonymous": false,
+					"inputs": [
+						{ "name": "_depositId", "type": "uint256", "indexed": false },
+						{ "name": "_sender", "type": "string", "indexed": false },
+						{ "name": "_recipient", "type": "address", "indexed": false },
+						{ "name": "_amount", "type": "uint256", "indexed": false }
+					]
+				}
+			]
+		}
+	],
+	"match_conditions": {
+		"functions": [],
+		"events": [
+			{ "signature": "Withdraw(uint256,string,address,uint256)", "expression": null }
+		],
+		"transactions": []
+	},
+	"trigger_conditions": [],
+	"triggers": ["tellor_alert"]
+}

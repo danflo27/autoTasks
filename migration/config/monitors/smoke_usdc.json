@@ -1,0 +1,34 @@
+{
+	"name": "Smoke Test USDC Transfer",
+	"paused": false,
+	"networks": ["ethereum_mainnet"],
+	"addresses": [
+		{
+			"address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+			"contract_spec": [
+				{
+					"type": "event",
+					"name": "Transfer",
+					"anonymous": false,
+					"inputs": [
+						{ "name": "from", "type": "address", "indexed": true },
+						{ "name": "to", "type": "address", "indexed": true },
+						{ "name": "value", "type": "uint256", "indexed": false }
+					]
+				}
+			]
+		}
+	],
+	"match_conditions": {
+		"functions": [],
+		"events": [
+			{
+				"signature": "Transfer(address,address,uint256)",
+				"expression": "value > 1000000000000"
+			}
+		],
+		"transactions": []
+	},
+	"trigger_conditions": [],
+	"triggers": ["tellor_alert"]
+}

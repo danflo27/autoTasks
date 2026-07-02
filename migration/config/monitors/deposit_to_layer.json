@@ -1,0 +1,32 @@
+{
+	"name": "Tellor Deposit To Layer",
+	"paused": true,
+	"networks": ["ethereum_mainnet"],
+	"addresses": [
+		{
+			"address": "0x5589e306b1920F009979a50B88caE32aecD471E4",
+			"contract_spec": [
+				{
+					"type": "function",
+					"name": "depositToLayer",
+					"stateMutability": "nonpayable",
+					"inputs": [
+						{ "name": "_amount", "type": "uint256" },
+						{ "name": "_tip", "type": "uint256" },
+						{ "name": "_layerRecipient", "type": "string" }
+					],
+					"outputs": []
+				}
+			]
+		}
+	],
+	"match_conditions": {
+		"functions": [
+			{ "signature": "depositToLayer(uint256,uint256,string)", "expression": null }
+		],
+		"events": [],
+		"transactions": [{ "status": "Success", "expression": null }]
+	},
+	"trigger_conditions": [],
+	"triggers": ["tellor_alert"]
+}
