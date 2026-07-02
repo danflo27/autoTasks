@@ -1,125 +1,143 @@
 # Defender Autotasks → OpenZeppelin Monitor Migration
 
-Self-hosted replacement for the sunset Defender Monitor. Monitor source is pinned at
-**v1.5.0** in the sibling checkout `../../openzeppelin-monitor/`; all our configs,
-scripts, and this runbook live here under `migration/` and are version-controlled
-with the legacy autotasks they replace.
+Self-hosted replacement for the sunset Defender Monitor. Runs the **official
+`openzeppelin/openzeppelin-monitor:v1.5.0` image** via Docker Compose; the
+matching source checkout lives at `../../openzeppelin-monitor/` (same tag) for
+reference. All configs, scripts, tests, and this runbook are version-controlled
+here alongside the legacy autotasks they replace.
+
+**Status: implementation complete and smoke-proven.** Every monitor is ported
+and unit-tested; the pipeline is proven end-to-end against USDC on mainnet.
+The Tellor monitors are `paused` pending Dan confirming addresses/keys —
+see [Activation checklist](#activation-checklist).
 
 ## Decisions (2026-07-02)
 
 | Decision | Choice |
 |---|---|
-| Notification channel | **Discord webhook** (`DISCORD_WEBHOOK_URL`) |
-| Monitors in scope | **All**, including the Unknown-status ones (Deposit/WithdrawFromLayer, disputes, bridges, tips) |
-| RPC for Polygon/Optimism/Sepolia | **Infura with a NEW key** (old project IDs are burned) |
-| Ethereum mainnet RPC | Coworker's ETH node (URL pending) |
-| Mumbai | **Dropped** (network deprecated, no Amoy replacement) |
-| AWS shape | **Single EC2 + Docker Compose** (Phase 3) |
-| Monitor version | **v1.5.0** (latest release, 2026-04-23) |
+| Notification channel | **Discord webhook** (`DISCORD_WEBHOOK_URL`); every alert also appended to `logs/alerts.log` (JSON lines) |
+| Monitors in scope | All. disputes/bridges/tips have no autotask logic in this repo — need the old Defender sentinel config to port (see below) |
+| Script language | **Python 3.12 stdlib** — the official image's node and jq are broken (glibc mismatch), python3 works; stdlib-only means no build/bundle step |
+| RPC for Polygon/Optimism/Sepolia | Infura with a NEW key (old project IDs burned) |
+| Ethereum mainnet RPC | Coworker's ETH node (URL pending); `ethereum-rpc.publicnode.com` as smoke-test stand-in (`eth.drpc.org` 403s `eth_getLogs`) |
+| Mumbai | Dropped |
+| AWS shape | Single EC2 + Docker Compose (Phase 3) |
 
-## Verified v1.5.0 behavior (read from source, not docs)
+## Architecture
 
-These correct two errors in the original planning assumptions:
-
-1. **`trigger_conditions` filter scripts signal via stdout, NOT exit code.**
-   The *last line of stdout* must be `true` or `false`:
-   - `true` → match is **filtered out** (no notification) — note the inversion vs. Defender's "return matches to alert"
-   - `false` → match **proceeds** (notification fires)
-   - Non-zero exit, unparseable output, empty output, or **timeout** → treated as a
-     script error and the match **proceeds** (fails open — alert fires).
-     Source: `src/bootstrap/mod.rs` `execute_trigger_condition` (only `Ok(true)`
-     filters; every `Err` falls through to keep) + `src/services/trigger/script/executor.rs`
-     `process_script_output`.
-   - Filter scripts **cannot** modify the match or add template variables.
-
-2. **Custom script triggers (`trigger_type: "script"`) are fire-and-forget.**
-   Exit code 0 = success, non-zero = error logged; stdout is ignored
-   (`process_script_output` short-circuits when `from_custom_notification`).
-   They receive `{"monitor_match": {"EVM": {...}}, "args": [...]}` on stdin and must
-   **build and send the notification themselves** (POST to the Discord webhook).
-   This is the enrichment path for datafeed / priceMonitor / dvm / EVMCall.
-
-3. **JS scripts run as `node -e "<file contents>"`** — the file is read at startup
-   and inlined; **no npm install happens**. `require()` resolves from the process
-   CWD (`/app` in the container), so npm deps must either be baked into the image
-   or (preferred) the script must be **bundled to a single self-contained file with
-   esbuild**. The production image (Alpine) ships `bash`, `python3`, `node`, `jq`.
-   Script changes require a Monitor restart (contents cached at startup).
-
-4. **Templates support only built-in variables** — `${monitor.name}`,
-   `${transaction.hash|from|to|value}`, `${events.N.signature}`,
-   `${events.N.args.<name>}`, `${functions.N.*}`. No custom/computed variables, no
-   explorer-link helper (bake explorer URL prefix into each trigger's message body).
-
-5. **`match_conditions` expressions** support `==`/`!=` on hex values (case-sensitive
-   on hex chars), numeric comparisons, `starts_with`/`ends_with`/`contains`, and
-   `AND`/`OR` — so the addressUpdates queryId filter can be a pure expression, e.g.
-   `queryId == '0x3ab3...'`, no script needed.
-
-6. **Secrets**: any config value can be `{"type": "environment", "value": "VAR"}`
-   (case-insensitive type tag). Resolved from the container env → compose loads `.env`.
-
-7. **State**: last processed block per network in `data/<slug>_last_block.txt`
-   (always written); optional missed-block recovery via `recovery_config` in the
-   network JSON (off for now, revisit in Phase 3).
-
-## Architecture: two tiers (confirmed)
-
-| Tier | Monitors | Mechanism |
-|---|---|---|
-| Simple | staking, tokenBridge, DepositToLayer, WithdrawFromLayer, addressUpdates, disputes, bridges, tips | `match_conditions` (+ expressions) → built-in **discord** trigger with `${...}` template |
-| Enriching | datafeed, priceMonitor, dvm, EVMCall | `match_conditions` → **script trigger** (bundled Node.js) that decodes/fetches/eth_calls, formats the legacy template text, and POSTs to Discord itself |
-
-Forced behavior changes vs. Defender (call out to confirm):
-
-- **Filter fails open**: on Defender, a crashed autotask meant *no* alert; here a
-  crashed/timed-out filter script means the alert *fires unfiltered*. Bias is now
-  toward false positives instead of silent misses (arguably better for alerting).
-- **Per-event headlines** (tokenBridge): one Discord trigger's template is static per
-  trigger, so either one trigger per event signature or move formatting to a script.
-- **Explorer links**: rebuilt as hardcoded per-network URL prefix + `${transaction.hash}`.
-
-## Layout
+One script trigger (`tellor_alert`) serves every monitor. It receives the match
+JSON on stdin and dispatches **by monitor name** to a formatter that reproduces
+the legacy template text and delivers it (Discord + alerts.log):
 
 ```
-migration/
-├── MIGRATION.md            ← this file
-├── docker-compose.yaml     ← builds ../../openzeppelin-monitor (v1.5.0), mounts ./config
-├── .env.example            ← all env vars (copy to .env, fill in)
-├── config/
-│   ├── networks/           ← ethereum_mainnet.json, sepolia.json (more pending addresses)
-│   ├── monitors/           ← one JSON per ported monitor
-│   ├── triggers/           ← discord + script trigger definitions
-│   │   └── scripts/        ← bundled Node.js enrichment scripts
-│   └── filters/            ← trigger_conditions filter scripts (avoid if expressions suffice)
-├── data/                   ← block checkpoints (gitignored)
-└── logs/                   ← (gitignored)
+config/
+├── networks/            ethereum_mainnet.json, sepolia.json
+├── monitors/            one JSON per legacy sentinel (name = dispatch key!)
+└── triggers/
+    ├── tellor_script.json   the single "tellor_alert" script trigger
+    └── scripts/
+        ├── alert.py         entry point (stdin JSON -> dispatch by monitor name)
+        ├── handlers.py      one formatter per monitor + HANDLERS map
+        └── tellor_lib.py    match parsing, ABI decode, price APIs, Discord, maps
+tests/run_tests.py       19 handler tests, run inside the Monitor image
 ```
 
-## Port order & status
+Legacy in-handler filtering (queryId allowlists, 10% deviation gate,
+EVMCall-only) lives in the handlers — a handler that returns without sending
+drops the match, exactly like an autotask returning no matches. Renaming a
+monitor in its JSON breaks dispatch: update `HANDLERS` in handlers.py too.
 
-| # | Monitor | Approach | Status |
+| Legacy autotask | Monitor | Match | Handler behavior |
 |---|---|---|---|
-| 1 | staking | match_conditions + discord template | ☐ blocked on address+ABI |
-| 2 | tokenBridge | match_conditions + per-event discord triggers | ☐ blocked on address+ABI |
-| 3 | Deposit/WithdrawFromLayer | match_conditions + discord template | ☐ blocked on address+ABI |
-| 4 | addressUpdates | queryId expression + discord template | ☐ blocked on address+ABI |
-| 5 | datafeed | script trigger (ABI decode, no APIs) | ☐ |
-| 6 | priceMonitor | script trigger (CG/CMC/CoinCap) | ☐ needs new CMC key |
-| 7 | dvm | script trigger (10% deviation gate) | ☐ needs new exchangerate key |
-| 8 | EVMCall | script trigger (multi-chain eth_call) | ☐ |
-| 9 | disputes / bridges / tips | match_conditions + discord template | ☐ need event definitions |
+| staking | Tellor Staking | events NewStaker / StakeWithdrawRequested / StakeWithdrawn | format, ÷1e18 |
+| tokenBridge | Tellor Token Bridge | fns addStakingRewards / claimExtraWithdraw / pauseBridge / unpauseBridge | per-fn headline |
+| DepositToLayer | Tellor Deposit To Layer | fn depositToLayer(uint256,uint256,string) | amounts ÷1e18 |
+| WithdrawFromLayer | Tellor Withdraw From Layer | **event** Withdraw(uint256,string,address,uint256) — legacy args match the event, not the struct-heavy fn | deposit details |
+| addressUpdates | Tellor Address Updates | fns submitValue + updateStakeAmount() | alert only for the 2 address-report queryIds / updateStakeAmount |
+| datafeed | Tellor Datafeed | fn submitValue | decode SpotPrice/EVMCall/RNG, USD format |
+| priceMonitor | Tellor Price Monitor | fn submitValue | 4 assets; CG+CMC+CoinCap, average; a dead source becomes `n/a` instead of killing the alert (legacy skipped the whole event) |
+| dvm | Tellor DVM Price Deviation | fn submitValue | 16 feeds; alert only ≥10% off reference |
+| EVMCall | Tellor EVMCall Validation | fn submitValue | decode, eth_call target chain, alert on mismatch; RPC failure now alerts "NOT VERIFIED" instead of a false "bad EVMCall" |
+| — | Smoke Test USDC Transfer | event Transfer > 1M USDC | pipeline proof; delete when no longer wanted |
 
-## Needed from Dan (blocking Phase 2)
+## Verified v1.5.0 behavior (from source + live testing)
 
-- [ ] Contract addresses + ABIs per network (Google Sheet export)
-- [ ] Which networks each monitor watches (mainnet? Sepolia? others?)
-- [ ] Coworker's ETH node URL → `RPC_ETHEREUM_MAINNET`
-- [ ] New Infura key → `RPC_SEPOLIA` / `RPC_POLYGON` / `RPC_OPTIMISM`
-- [ ] Discord webhook URL for the alerts channel → `DISCORD_WEBHOOK_URL`
-- [ ] Rotated CoinMarketCap + ExchangeRate-API keys (old ones are burned in git history)
-- [ ] What disputes/bridges/tips sentinels actually matched on (Defender UI config —
-      the repo only has generic templates for these)
+1. **Script triggers are fire-and-forget**: exit 0 = ok, non-zero = error
+   logged, stdout ignored. Scripts receive `{"monitor_match": {"EVM": {...}},
+   "args": [...]}` on stdin; `network_slug` and decoded `matched_on_args` are
+   included. Scripts must send the notification themselves.
+2. **`trigger_conditions` filter scripts** (we don't use any): last stdout line
+   `true` = drop match, `false` = keep. Errors/timeouts KEEP the match (fails
+   open). They cannot enrich notifications.
+3. **Scripts run as `python3 -c "<file content>"`** with cwd `/app`; file
+   contents are cached at startup → **config/script changes need a restart**.
+   Shared modules import via `sys.path.insert(0, "config/triggers/scripts")`.
+4. **The official image's node and jq are broken** (`GLIBC_2.43 not found`,
+   Wolfi base). python3 3.12 and bash work. If JS is ever needed, build the
+   image locally from `../../openzeppelin-monitor/Dockerfile.production`
+   (Alpine — the compose file has a commented build stanza).
+5. **Replay mode (`--monitor-path --network --block`) EXECUTES triggers**, not
+   just match printing — with `DISCORD_WEBHOOK_URL` set, replaying posts real
+   Discord messages. Unset it (or use a test channel) when replaying.
+6. Match combination: `transactions` conditions AND (events OR functions);
+   within a category, conditions are OR'd. Function-based monitors here gate on
+   tx status Success so failed calls don't alert (events imply success).
+7. State: `data/<network>_last_block.txt` checkpoint (always written);
+   `recovery_config` in network JSON enables missed-block retry (Phase 3).
+
+## Forced behavior changes vs Defender (all deliberate)
+
+- **Timestamps** are alert-time UTC, not block time (block timestamp isn't in
+  the match payload).
+- **priceMonitor**: one flaky price API no longer suppresses the whole alert.
+- **EVMCall**: RPC failures alert distinctly as NOT VERIFIED (legacy false-"bad
+  EVMCall"). Unsupported chainIds (e.g. dropped Mumbai) also alert NOT VERIFIED.
+- **addressUpdates** `updateStakeAmount`: legacy printed `undefined` for data
+  (args[0] of a no-arg function); now omitted.
+- A crashed handler = alert lost with an error in Monitor logs (Defender was
+  the same: crashed autotask = no alert). Watch for `Script execution failed`.
+
+## Proof of working pipeline (2026-07-02)
+
+Known basic test contract: **USDC mainnet Transfer events** (`Smoke Test USDC
+Transfer` monitor, threshold 1M USDC).
+
+1. **19/19 handler tests** pass inside the official image (includes live
+   CoinGecko-backed dvm/priceMonitor paths and all drop/filter paths):
+   `docker run --rm -v .:/work -w /work --entrypoint python3 openzeppelin/openzeppelin-monitor:v1.5.0 tests/run_tests.py`
+2. **`--check`**: all 10 monitors + 2 networks + trigger validate.
+3. **Replay** of mainnet block `25446155` (contains a 10,000,000 USDC
+   transfer): 2 matches, expression filter applied, script trigger executed.
+4. **Live run**: block watcher picked up new blocks and `logs/alerts.log`
+   captured real transfers within seconds, e.g.
+   `Amount: 10,000,000.00 USDC` tx `0x1283bf73c8a9...` (etherscan-linked,
+   formatted by handle_smoke).
+
+## Activation checklist (what Dan provides, per monitor)
+
+Candidate addresses below are from Tellor's own repos on this machine —
+**verify before unpausing** (set `"paused": false`).
+
+- [ ] Oracle monitors (staking, address_updates, datafeed, price_monitor, dvm,
+      evm_call): confirm oracle address per network. Candidate mainnet
+      `0x8cFc184c877154a8F9ffE0fe75649dbe5e2DBEbf`, sepolia
+      `0xB19584Be015c04cf6CFBF6370Fe94a58b7A38830` (telliot contract_directory).
+- [ ] Bridge monitors (token_bridge, deposit_to_layer, withdraw_from_layer):
+      confirm bridge address + V1 vs V2 (V2 renames claimExtraWithdraw →
+      claimExtraWithdrawByWithdrawId and pauseBridge → proposePauseBridge/
+      approvePause; ABIs in `../../layer/evm/artifacts/.../TokenBridgeV2.json`).
+      Candidate mainnet V1 `0x5589e306b1920F009979a50B88caE32aecD471E4`
+      (bridgewatch config).
+- [ ] Which network(s) each monitor watches (all default `ethereum_mainnet`;
+      add network JSONs for others).
+- [ ] `.env`: coworker's ETH node URL, NEW Infura key, `DISCORD_WEBHOOK_URL`,
+      rotated `CMC_PRO_API_KEY` + `EXCHANGERATE_API_KEY` (old keys in git
+      history are burned).
+- [ ] disputes / bridges / tips: repo only has generic templates — need the old
+      Defender sentinel config (contract + events) to port. Alert text would be
+      `**Defender Monitor <name> Triggered**` style via a small handler.
+- [ ] After unpausing each monitor: replay a block with a known event and
+      record it in the test log below.
 
 ## Runbook
 
@@ -127,9 +145,10 @@ All commands from `autoTasks/migration/`.
 
 ```sh
 cp .env.example .env        # once; fill in real values
-docker compose build        # build Monitor v1.5.0 image (Rust compile, slow first time)
-docker compose up -d        # start
+docker compose up -d        # start (pulls official v1.5.0 image)
 docker compose logs -f monitor
+tail -f logs/alerts.log     # every alert, as JSON lines
+docker compose restart monitor   # REQUIRED after any config/script change
 docker compose down
 docker compose --profile metrics up -d   # + Prometheus :9090, Grafana :3000
 ```
@@ -137,27 +156,30 @@ docker compose --profile metrics up -d   # + Prometheus :9090, Grafana :3000
 Validation / testing:
 
 ```sh
-# validate all JSON configs without starting (image entrypoint IS the binary —
-# pass flags only). "No active monitors found" = configs valid but none defined yet.
+# handler unit tests (runs in the image; needs network for CoinGecko cases)
+docker run --rm -v .:/work -w /work --entrypoint python3 \
+    openzeppelin/openzeppelin-monitor:v1.5.0 tests/run_tests.py
+
+# config validation (image entrypoint IS the binary — pass flags only)
 docker compose run --rm monitor --check
 
-# RPC health check. NOTE: upstream's scripts/validate_network_config.sh curls the
-# raw `.url.value`, which for our environment-type configs is the VAR NAME — useless.
-# Check the resolved URLs directly instead:
+# replay one monitor against a historical block
+# ⚠️ executes triggers for real — posts to Discord if DISCORD_WEBHOOK_URL is set
+docker compose run --rm monitor \
+  --monitor-path /app/config/monitors/<name>.json --network <slug> --block <N>
+
+# RPC health check (upstream validate_network_config.sh can't resolve
+# environment-type URLs, so check the resolved values directly)
 set -a; source .env; set +a
 for u in "$RPC_ETHEREUM_MAINNET" "$RPC_SEPOLIA" "$RPC_POLYGON" "$RPC_OPTIMISM" "$RPC_GNOSIS" "$RPC_CHIADO"; do
   echo "$u -> $(curl -s -m 10 "$u" -X POST -H 'Content-Type: application/json' \
     --data '{"method":"net_version","params":[],"id":1,"jsonrpc":"2.0"}' | jq -r .result)"
 done
-
-# replay a historical block through one monitor (per-monitor test; record each below)
-docker compose run --rm monitor \
-  --monitor-path /app/config/monitors/<name>.json --network <slug> --block <N>
 ```
-
-Config changes: edit JSON/scripts here, then `docker compose restart monitor`
-(scripts are cached at startup — a restart is required, not just a new block).
 
 ### Per-monitor test log
 
-(filled in as each monitor is ported — command + block number + expected output)
+| Monitor | Command | Result |
+|---|---|---|
+| Smoke Test USDC Transfer | `docker compose run --rm monitor --monitor-path /app/config/monitors/smoke_usdc.json --network ethereum_mainnet --block 25446155` | ✅ 2 matches (10M USDC transfer), alert formatted + logged (2026-07-02) |
+| Tellor monitors | same pattern, block TBD per monitor | pending address confirmation |
