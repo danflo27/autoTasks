@@ -1,6 +1,6 @@
 {
 	"name": "Tellor EVMCall Validation",
-	"paused": true,
+	"paused": false,
 	"networks": ["ethereum_mainnet"],
 	"addresses": [
 		{
@@ -26,7 +26,7 @@
 			{ "signature": "submitValue(bytes32,bytes,uint256,bytes)", "expression": null }
 		],
 		"events": [],
-		"transactions": [{ "status": "Success", "expression": null }]
+		"transactions": []
 	},
 	"trigger_conditions": [],
 	"triggers": ["tellor_alert"]

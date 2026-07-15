@@ -1,6 +1,6 @@
 {
 	"name": "Tellor Address Updates",
-	"paused": true,
+	"paused": false,
 	"networks": ["ethereum_mainnet"],
 	"addresses": [
 		{
@@ -34,7 +34,7 @@
 			{ "signature": "updateStakeAmount()", "expression": null }
 		],
 		"events": [],
-		"transactions": [{ "status": "Success", "expression": null }]
+		"transactions": []
 	},
 	"trigger_conditions": [],
 	"triggers": ["tellor_alert"]

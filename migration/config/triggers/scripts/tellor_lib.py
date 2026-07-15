@@ -5,14 +5,19 @@ Python 3.12 stdlib only: the official Monitor image has no pip packages
 (and its bundled node/jq are broken, which is why these scripts are Python).
 """
 
+import ast
+import base64
 import json
 import os
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
 ALERT_LOG = "logs/alerts.log"  # /app/logs inside the container, mounted rw
+DISCORD_CONTENT_LIMIT = 2000
 
 EXPLORER_TX = {
     "ethereum_mainnet": "https://etherscan.io/tx/",
@@ -32,14 +37,24 @@ EVM_CALL_RPCS = {
     10200: "RPC_CHIADO",
 }
 
-# addressUpdates: queryId -> alert message
-ADDRESS_REPORT_IDS = {
-    "0x3ab34a189e35885414ac4e83c5a7faa9d8f03a4d530728ef516d203d91d6309c": "autopay address report",
-    "0xcf0c5863be1cf3b948a9ff43290f931399765d051a60c3b23a4e098148b1f707": "oracle address report",
+MONITOR_RPCS = {
+    "ethereum_mainnet": "RPC_ETHEREUM_MAINNET",
+    "sepolia": "RPC_SEPOLIA",
 }
 
-# priceMonitor: queryId -> (label, coingecko id, coinmarketcap symbol, coincap id | None)
-PRICE_MONITOR_ASSETS = {
+# addressUpdates: queryId -> (display label, query type, response ABI type)
+ADDRESS_REPORTS = {
+    "0x3ab34a189e35885414ac4e83c5a7faa9d8f03a4d530728ef516d203d91d6309c": (
+        "Autopay addresses", "AutopayAddresses", "address[]"
+    ),
+    "0xcf0c5863be1cf3b948a9ff43290f931399765d051a60c3b23a4e098148b1f707": (
+        "Tellor oracle address", "TellorOracleAddress", "address"
+    ),
+}
+
+# TellorFlex data report: queryId ->
+# (label, coingecko id, coinmarketcap symbol, coincap id | None)
+TRUSTED_PRICE_ASSETS = {
     "0xa6f013ee236804827b77696d350e9f0ac3e879328f2a3021d473a0b778ad78ac": ("BTC / USD", "bitcoin", "BTC", "bitcoin"),
     "0x83a7f3d48786ac2667503a61e8c415438ed2922eb86a2906e4ee66d9a2ce4992": ("ETH / USD", "ethereum", "ETH", "ethereum"),
     "0x5c13cd9c97dbb98f2429c101a2a8150e6c7a0ddaff6124ee176a3a411067ded0": ("TRB / USD", "tellor", "TRB", "tellor"),
@@ -80,7 +95,9 @@ class Match:
         self.trigger_args = payload.get("args") or []
         self.monitor_name = evm["monitor"]["name"]
         self.network = evm.get("network_slug", "")
-        self.tx_hash = (evm.get("transaction") or {}).get("hash", "")
+        self.transaction = evm.get("transaction") or {}
+        self.receipt = evm.get("receipt")
+        self.tx_hash = self.transaction.get("hash", "")
 
     def _matched(self, kind):
         entries = (self._evm.get("matched_on_args") or {}).get(kind) or []
@@ -113,6 +130,24 @@ def now_utc():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def unix_utc(value, milliseconds=False):
+    """Unix timestamp -> readable UTC, retaining millisecond precision."""
+    try:
+        raw = int(value)
+    except (TypeError, ValueError):
+        return "invalid timestamp"
+    if raw == 0:
+        return "none"
+    divisor = 1000 if milliseconds else 1
+    try:
+        timestamp = datetime.fromtimestamp(raw / divisor, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return "invalid timestamp (out of range)"
+    if milliseconds and raw % 1000:
+        return timestamp.strftime("%Y-%m-%d %H:%M:%S.") + f"{raw % 1000:03d} UTC"
+    return timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def wei(v):
     """uint256 arg value (decimal string) -> whole-token float, like legacy /1e18."""
     return int(v) / 1e18
@@ -127,28 +162,120 @@ def usd(v):
     return "${:,.2f}".format(v)
 
 
+def parse_structured_arg(value):
+    """Parse Monitor's deterministic tuple/array display without executing code."""
+    if isinstance(value, (list, tuple)):
+        return value
+    try:
+        return ast.literal_eval(str(value))
+    except (SyntaxError, ValueError) as error:
+        raise ValueError("monitor returned malformed structured ABI data") from error
+
+
+def compact_hex(raw):
+    encoded = raw.hex()
+    if len(raw) <= 12:
+        return "0x" + encoded
+    return "0x{}…{}".format(encoded[:16], encoded[-8:])
+
+
+def describe_bytes(raw, label="untyped data"):
+    if not raw:
+        return "empty {}".format(label)
+    return "{} bytes of {} ({})".format(len(raw), label, compact_hex(raw))
+
+
+def signature_count(signatures):
+    """Count non-empty (v, r, s) signatures without displaying signature data."""
+    present = 0
+    for signature in signatures:
+        if len(signature) != 3:
+            raise ValueError("monitor returned malformed signature data")
+        v, r, s = signature
+        if int(v) or int(str(r), 16) or int(str(s), 16):
+            present += 1
+    return present
+
+
+def query_id_label(query_id):
+    key = str(query_id).lower()
+    if key in TRUSTED_PRICE_ASSETS:
+        return TRUSTED_PRICE_ASSETS[key][0]
+    if key in DVM_FEEDS:
+        return DVM_FEEDS[key][0]
+    if key in ADDRESS_REPORTS:
+        return ADDRESS_REPORTS[key][0]
+    return "Unknown query"
+
+
+def oracle_value(query_id, value_hex):
+    """Decode only query IDs whose response schema is known locally."""
+    key = str(query_id).lower()
+    if key in TRUSTED_PRICE_ASSETS or key in DVM_FEEDS:
+        return usd(spot_value(value_hex))
+    if key in ADDRESS_REPORTS:
+        response_type = ADDRESS_REPORTS[key][2]
+        raw = hex_bytes(value_hex)
+        try:
+            decoded = abi_decode([response_type], raw)[0]
+        except ValueError:
+            return describe_bytes(raw, "malformed ABI address data")
+        if response_type == "address[]":
+            shown = decoded[:12]
+            suffix = "" if len(shown) == len(decoded) else ", …"
+            return "{} addresses: {}{}".format(
+                len(decoded), ", ".join(shown) or "none", suffix
+            )
+        return decoded
+    return describe_bytes(hex_bytes(value_hex), "value data with an unavailable schema")
+
+
 # ── minimal ABI decoding (only the types Tellor queryData uses) ──────────────
 
 def abi_decode(types, data):
     """Decode ABI-encoded `data` (bytes) as a tuple of `types`.
 
-    Supports uint256, address, bytes32, bytes, string — enough for Tellor
-    queryData/value shapes: (string,bytes), (string,string),
-    (uint256,address,bytes), (bytes,uint256).
+    Supports uint256, address, address[], bytes32, bytes, and string — enough
+    for the Tellor queryData and value shapes used by these monitors. Rejects
+    truncated or non-canonical offsets instead of fabricating empty values.
     """
+    head_size = 32 * len(types)
+    if len(data) < head_size or len(data) % 32:
+        raise ValueError("ABI data is truncated or not word-aligned")
+
+    def dynamic_bounds(word, item_size):
+        offset = int.from_bytes(word, "big")
+        if offset < head_size or offset % 32 or offset + 32 > len(data):
+            raise ValueError("ABI dynamic offset is invalid")
+        length = int.from_bytes(data[offset:offset + 32], "big")
+        start = offset + 32
+        if length > (len(data) - start) // item_size:
+            raise ValueError("ABI dynamic value extends past input data")
+        return length, start
+
     out = []
     for i, t in enumerate(types):
         word = data[32 * i:32 * i + 32]
         if t == "uint256":
             out.append(int.from_bytes(word, "big"))
         elif t == "address":
+            if any(word[:12]):
+                raise ValueError("ABI address has nonzero high-order padding")
             out.append("0x" + word[-20:].hex())
         elif t == "bytes32":
             out.append("0x" + word.hex())
+        elif t == "address[]":
+            length, start = dynamic_bounds(word, 32)
+            addresses = []
+            for j in range(length):
+                address_word = data[start + 32 * j:start + 32 * (j + 1)]
+                if any(address_word[:12]):
+                    raise ValueError("ABI address array has invalid padding")
+                addresses.append("0x" + address_word[-20:].hex())
+            out.append(addresses)
         elif t in ("bytes", "string"):
-            off = int.from_bytes(word, "big")
-            length = int.from_bytes(data[off:off + 32], "big")
-            raw = data[off + 32:off + 32 + length]
+            length, start = dynamic_bounds(word, 1)
+            raw = data[start:start + length]
             out.append(raw.decode() if t == "string" else raw)
         else:
             raise ValueError(f"unsupported ABI type: {t}")
@@ -165,18 +292,85 @@ def decode_query_data(query_data_hex):
     return qtype, params
 
 
+def decode_evm_response(value_hex):
+    """EVMCall response -> (untyped eth_call return bytes, source timestamp)."""
+    return abi_decode(["bytes", "uint256"], hex_bytes(value_hex))
+
+
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 def http_json(url, headers=None, body=None, timeout=8):
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, headers={
+    request_headers = {
         "Content-Type": "application/json",
         "User-Agent": "tellor-monitor/1.0",
         **(headers or {}),
-    })
+    }
+    parts = urllib.parse.urlsplit(url)
+    if parts.username is not None:
+        hostname = parts.hostname or ""
+        if ":" in hostname:
+            hostname = f"[{hostname}]"
+        netloc = hostname
+        if parts.port is not None:
+            netloc += f":{parts.port}"
+        url = urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+        credentials = f"{urllib.parse.unquote(parts.username)}:{urllib.parse.unquote(parts.password or '')}"
+        request_headers["Authorization"] = "Basic " + base64.b64encode(credentials.encode()).decode()
+    req = urllib.request.Request(url, data=data, headers=request_headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode()
         return json.loads(raw) if raw else {}
+
+
+def _receipt_succeeded(receipt):
+    status = receipt.get("status") if isinstance(receipt, dict) else None
+    if isinstance(status, bool):
+        return status
+    if isinstance(status, int):
+        return status == 1
+    if isinstance(status, str):
+        try:
+            return int(status, 16 if status.lower().startswith("0x") else 10) == 1
+        except ValueError:
+            pass
+    raise RuntimeError("transaction receipt returned an invalid status")
+
+
+def function_match_succeeded(match):
+    """Verify a matched top-level function call with one receipt request.
+
+    Monitor v1.5 may assume success without fetching a receipt when a block has
+    unrelated logs. Checking only after the selector matches avoids both false
+    alerts and a receipt request for every transaction in every block.
+    """
+    if match._matched("functions") is None:
+        return True
+    if match.receipt is not None:
+        return _receipt_succeeded(match.receipt)
+    rpc_env = MONITOR_RPCS.get(match.network)
+    rpc_url = os.environ.get(rpc_env or "")
+    if not rpc_env or not rpc_url:
+        raise RuntimeError("cannot verify function status: no RPC for {}".format(match.network))
+    try:
+        payload = http_json(
+            rpc_url,
+            body={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_getTransactionReceipt",
+                "params": [match.tx_hash],
+            },
+        )
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(
+            "cannot verify function status: RPC returned HTTP {}".format(error.code)
+        ) from None
+    except Exception:
+        raise RuntimeError("cannot verify function status: RPC request failed") from None
+    if not isinstance(payload, dict) or payload.get("error") or payload.get("result") is None:
+        raise RuntimeError("cannot verify function status: receipt unavailable")
+    return _receipt_succeeded(payload["result"])
 
 
 def eth_call(rpc_url, to, calldata_hex):
@@ -219,7 +413,70 @@ def fx_usd_rate(currency):
 
 # ── alert delivery ────────────────────────────────────────────────────────────
 
-def send_alert(match, content):
+def _discord_wait_url(webhook):
+    """Set wait=true so Discord confirms that it persisted the message."""
+    parts = urllib.parse.urlsplit(webhook)
+    query = dict(urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
+    query["wait"] = "true"
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment)
+    )
+
+
+def _retry_after(error):
+    value = error.headers.get("Retry-After")
+    if value is None:
+        try:
+            payload = json.loads(error.read().decode())
+            value = payload.get("retry_after")
+        except Exception:
+            value = None
+    try:
+        return max(float(value), 0.0)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _discord_content(content):
+    """Keep Discord content valid even if a dynamic argument expands the template."""
+    if len(content) <= DISCORD_CONTENT_LIMIT:
+        return content
+    suffix = "\n… (truncated; full content is in logs/alerts.log)"
+    return content[: DISCORD_CONTENT_LIMIT - len(suffix)] + suffix
+
+
+def post_discord_webhook(webhook, content, attempts=3, sleep=time.sleep):
+    """Post one confirmed Discord message without leaking the token-bearing URL."""
+    payload = {
+        "content": _discord_content(content),
+        "allowed_mentions": {"parse": []},
+    }
+    url = _discord_wait_url(webhook)
+    last_reason = "network error"
+    for attempt in range(1, attempts + 1):
+        try:
+            http_json(url, body=payload)
+            return
+        except urllib.error.HTTPError as error:
+            last_reason = "HTTP {}".format(error.code)
+            if error.code == 429 and attempt < attempts:
+                sleep(_retry_after(error))
+                continue
+            if 500 <= error.code < 600 and attempt < attempts:
+                sleep(float(attempt))
+                continue
+            raise RuntimeError("Discord webhook delivery failed ({})".format(last_reason)) from None
+        except Exception:
+            if attempt == attempts:
+                raise RuntimeError(
+                    "Discord webhook delivery failed after {} attempts ({})".format(
+                        attempts, last_reason
+                    )
+                ) from None
+            sleep(float(attempt) / 2)
+
+
+def send_alert(match, content, webhook_env="DISCORD_WEBHOOK_URL"):
     """Deliver an alert: append to logs/alerts.log, then POST to Discord.
 
     Without DISCORD_WEBHOOK_URL set the alert is log-only (used by the smoke
@@ -237,19 +494,8 @@ def send_alert(match, content):
     with open(ALERT_LOG, "a") as f:
         f.write(record + "\n")
 
-    webhook = os.environ.get("DISCORD_WEBHOOK_URL")
+    webhook = os.environ.get(webhook_env)
     if not webhook:
-        print("DISCORD_WEBHOOK_URL not set; alert logged only", file=sys.stderr)
+        print("{} not set; alert logged only".format(webhook_env), file=sys.stderr)
         return
-    for attempt in (1, 2):
-        try:
-            http_json(webhook, body={"content": content})
-            return
-        except urllib.error.HTTPError as e:
-            if e.code == 204:  # Discord returns 204 No Content on success
-                return
-            if attempt == 2:
-                raise
-        except Exception:
-            if attempt == 2:
-                raise
+    post_discord_webhook(webhook, content)

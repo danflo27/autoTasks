@@ -1,0 +1,90 @@
+{
+  "name": "Update Validator Set Calls",
+  "paused": false,
+  "networks": [
+    "ethereum_mainnet"
+  ],
+  "addresses": [
+    {
+      "address": "0xFfa3393BE1E4b442fff6cD0df0794B0031e9CF65",
+      "contract_spec": [
+        {
+          "inputs": [
+            {
+              "internalType": "bytes32",
+              "name": "_newValidatorSetHash",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint64",
+              "name": "_newPowerThreshold",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint256",
+              "name": "_newValidatorTimestamp",
+              "type": "uint256"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "address",
+                  "name": "addr",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "power",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct Validator[]",
+              "name": "_currentValidatorSet",
+              "type": "tuple[]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint8",
+                  "name": "v",
+                  "type": "uint8"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "r",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "s",
+                  "type": "bytes32"
+                }
+              ],
+              "internalType": "struct Signature[]",
+              "name": "_sigs",
+              "type": "tuple[]"
+            }
+          ],
+          "name": "updateValidatorSet",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [
+      {
+        "signature": "updateValidatorSet(bytes32,uint64,uint256,(address,uint256)[],(uint8,bytes32,bytes32)[])",
+        "expression": null
+      }
+    ],
+    "events": [],
+    "transactions": []
+  },
+  "trigger_conditions": [],
+  "triggers": [
+    "tellor_alert"
+  ]
+}

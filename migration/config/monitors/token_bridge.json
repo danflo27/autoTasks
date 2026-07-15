@@ -1,6 +1,6 @@
 {
 	"name": "Tellor Token Bridge",
-	"paused": true,
+	"paused": false,
 	"networks": ["ethereum_mainnet"],
 	"addresses": [
 		{
@@ -45,7 +45,7 @@
 			{ "signature": "unpauseBridge()", "expression": null }
 		],
 		"events": [],
-		"transactions": [{ "status": "Success", "expression": null }]
+		"transactions": []
 	},
 	"trigger_conditions": [],
 	"triggers": ["tellor_alert"]

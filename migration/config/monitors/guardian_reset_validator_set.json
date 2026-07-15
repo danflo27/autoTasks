@@ -1,0 +1,53 @@
+{
+  "name": "Guardian Reset Validator Set Calls",
+  "paused": false,
+  "networks": [
+    "ethereum_mainnet"
+  ],
+  "addresses": [
+    {
+      "address": "0xFfa3393BE1E4b442fff6cD0df0794B0031e9CF65",
+      "contract_spec": [
+        {
+          "anonymous": false,
+          "inputs": [
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "_powerThreshold",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "uint256",
+              "name": "_validatorTimestamp",
+              "type": "uint256"
+            },
+            {
+              "indexed": false,
+              "internalType": "bytes32",
+              "name": "_validatorSetHash",
+              "type": "bytes32"
+            }
+          ],
+          "name": "GuardianResetValidatorSet",
+          "type": "event"
+        }
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [],
+    "events": [
+      {
+        "signature": "GuardianResetValidatorSet(uint256,uint256,bytes32)",
+        "expression": null
+      }
+    ],
+    "transactions": []
+  },
+  "trigger_conditions": [],
+  "triggers": [
+    "tellor_alert"
+  ]
+}

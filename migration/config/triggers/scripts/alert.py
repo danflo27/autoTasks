@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, "config/triggers/scripts")
 
 from handlers import HANDLERS  # noqa: E402
-from tellor_lib import Match  # noqa: E402
+from tellor_lib import Match, function_match_succeeded  # noqa: E402
 
 
 def main():
@@ -25,6 +25,9 @@ def main():
         raise KeyError(
             f"no handler for monitor {match.monitor_name!r}; known: {sorted(HANDLERS)}"
         )
+    if not function_match_succeeded(match):
+        print("skipping failed function call {}".format(match.tx_hash), file=sys.stderr)
+        return
     handler(match)
 
 

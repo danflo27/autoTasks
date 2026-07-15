@@ -1,6 +1,6 @@
 {
 	"name": "Smoke Test USDC Transfer",
-	"paused": false,
+	"paused": true,
 	"networks": ["ethereum_mainnet"],
 	"addresses": [
 		{

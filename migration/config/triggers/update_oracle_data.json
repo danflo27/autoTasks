@@ -1,0 +1,15 @@
+{
+  "update_oracle_data_discord": {
+    "name": "Update Oracle Data Discord Alert",
+    "trigger_type": "script",
+    "config": {
+      "language": "Python",
+      "script_path": "./config/triggers/scripts/generic_alert.py",
+      "arguments": [
+        "[updateOracleData](https://etherscan.io/tx/${transaction.hash}) called by ${transaction.from} on contract [0x5526e7e7CF982f5D3045DAf18b7e813E4b7a8FE5](https://etherscan.io/address/0x5526e7e7CF982f5D3045DAf18b7e813E4b7a8FE5#code)",
+        "DISCORD_WEBHOOK_URL"
+      ],
+      "timeout_ms": 180000
+    }
+  }
+}

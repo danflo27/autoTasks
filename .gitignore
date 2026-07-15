@@ -4,3 +4,5 @@ migration/logs/
 node_modules/
 .DS_Store
 __pycache__/
+migration/config/monitors/quickstart_function.json
+migration/config/triggers/quickstart_function.json

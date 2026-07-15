@@ -1,6 +1,6 @@
 {
 	"name": "Tellor Deposit To Layer",
-	"paused": true,
+	"paused": false,
 	"networks": ["ethereum_mainnet"],
 	"addresses": [
 		{
@@ -25,7 +25,7 @@
 			{ "signature": "depositToLayer(uint256,uint256,string)", "expression": null }
 		],
 		"events": [],
-		"transactions": [{ "status": "Success", "expression": null }]
+		"transactions": []
 	},
 	"trigger_conditions": [],
 	"triggers": ["tellor_alert"]

@@ -2,13 +2,14 @@
 #
 # The Monitor source lives in a sibling checkout pinned to a release tag:
 #   ../../openzeppelin-monitor  (v1.5.0)
-# This compose file builds the production image from that checkout and mounts
-# the version-controlled configs from THIS repo (./config).
+# This compose file pulls the pinned production image and mounts the
+# version-controlled configs from THIS repo (./config).
 #
 # Usage (from autoTasks/migration/):
-#   cp .env.example .env   # fill in real values
-#   docker compose build
-#   docker compose up -d
+#   test -e .env || cp .env.example .env   # never overwrite existing secrets
+#   chmod 600 .env
+#   docker compose pull monitor
+#   docker compose up -d --force-recreate monitor
 #   docker compose --profile metrics up -d   # optional Prometheus (:9090) + Grafana (:3000)
 
 services:
@@ -16,7 +17,7 @@ services:
     # Official prebuilt image, pinned to the same tag as the ../../openzeppelin-monitor
     # source checkout. To build locally instead (e.g. to add npm deps to the image),
     # uncomment the build stanza and change the image name to a local one.
-    image: openzeppelin/openzeppelin-monitor:v1.5.0
+    image: openzeppelin/openzeppelin-monitor:v1.5.0@sha256:8541bcfa869577aa6e44ea85f52700f5bb66c17a75b01f2eb2be66603d172635
     # build:
     #   context: ../../openzeppelin-monitor
     #   dockerfile: Dockerfile.production

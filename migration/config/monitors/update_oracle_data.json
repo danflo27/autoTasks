@@ -1,0 +1,129 @@
+{
+  "name": "Update Oracle Data Calls",
+  "paused": false,
+  "networks": [
+    "ethereum_mainnet"
+  ],
+  "addresses": [
+    {
+      "address": "0x5526e7e7CF982f5D3045DAf18b7e813E4b7a8FE5",
+      "contract_spec": [
+        {
+          "inputs": [
+            {
+              "components": [
+                {
+                  "internalType": "bytes32",
+                  "name": "queryId",
+                  "type": "bytes32"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "bytes",
+                      "name": "value",
+                      "type": "bytes"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "timestamp",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "aggregatePower",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "previousTimestamp",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "nextTimestamp",
+                      "type": "uint256"
+                    },
+                    {
+                      "internalType": "uint256",
+                      "name": "lastConsensusTimestamp",
+                      "type": "uint256"
+                    }
+                  ],
+                  "internalType": "struct ReportData",
+                  "name": "report",
+                  "type": "tuple"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "attestationTimestamp",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct OracleAttestationData",
+              "name": "_attestData",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "address",
+                  "name": "addr",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "power",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct Validator[]",
+              "name": "_currentValidatorSet",
+              "type": "tuple[]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint8",
+                  "name": "v",
+                  "type": "uint8"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "r",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "s",
+                  "type": "bytes32"
+                }
+              ],
+              "internalType": "struct Signature[]",
+              "name": "_sigs",
+              "type": "tuple[]"
+            }
+          ],
+          "name": "updateOracleData",
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "type": "function"
+        }
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [
+      {
+        "signature": "updateOracleData((bytes32,(bytes,uint256,uint256,uint256,uint256,uint256),uint256),(address,uint256)[],(uint8,bytes32,bytes32)[])",
+        "expression": null
+      }
+    ],
+    "events": [],
+    "transactions": []
+  },
+  "trigger_conditions": [],
+  "triggers": [
+    "tellor_alert"
+  ]
+}

@@ -1,6 +1,6 @@
 {
 	"name": "Tellor Staking",
-	"paused": true,
+	"paused": false,
 	"networks": ["ethereum_mainnet"],
 	"addresses": [
 		{

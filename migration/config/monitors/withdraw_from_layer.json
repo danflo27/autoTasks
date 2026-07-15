@@ -1,6 +1,6 @@
 {
 	"name": "Tellor Withdraw From Layer",
-	"paused": true,
+	"paused": false,
 	"networks": ["ethereum_mainnet"],
 	"addresses": [
 		{
