@@ -212,6 +212,7 @@ class DeliveryTests(SecureRouteFixture):
 
     def test_log_only_writes_locally_without_route_file_or_http(self):
         log_path = self.root / "logs" / "alerts.log"
+        lifecycle_path = self.root / "logs" / "handler_delivery.log"
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
             discord_routes, "post_discord_webhook"
         ) as post:
@@ -221,6 +222,7 @@ class DeliveryTests(SecureRouteFixture):
                 mode="log-only",
                 log_path=log_path,
                 context={"network": "ethereum_mainnet", "tx": "0xabc"},
+                lifecycle_log_path=lifecycle_path,
             )
         self.assertFalse(delivered)
         post.assert_not_called()
@@ -228,6 +230,7 @@ class DeliveryTests(SecureRouteFixture):
         self.assertEqual(record["monitor"], discord_routes.ROUTE_NAMES[0])
         self.assertEqual(record["mode"], "log-only")
         self.assertEqual(record["network"], "ethereum_mainnet")
+        self.assertFalse(lifecycle_path.exists())
 
     def test_missing_route_fails_without_legacy_env_fallback(self):
         self.write_routes({discord_routes.ROUTE_NAMES[1]: VALID_URL_B})
@@ -259,6 +262,188 @@ class DeliveryTests(SecureRouteFixture):
             [call.args[0] for call in post.call_args_list],
             [VALID_URL_A, VALID_URL_B],
         )
+
+    def test_platform_route_emits_closed_redaction_safe_lifecycle(self):
+        name = discord_routes.ROUTE_NAMES[0]
+        lifecycle_path = self.root / "logs" / "handler_delivery.log"
+        alert_content = "alert body must not enter lifecycle"
+        with mock.patch.dict(
+            os.environ,
+            {discord_routes.PLATFORM_WEBHOOK_ENV: VALID_URL_A},
+            clear=True,
+        ), mock.patch.object(discord_routes, "post_discord_webhook") as post:
+            self.assertTrue(
+                discord_routes.deliver_alert(
+                    name,
+                    alert_content,
+                    mode="live",
+                    lifecycle_log_path=lifecycle_path,
+                    allow_platform_webhook=True,
+                )
+            )
+        post.assert_called_once_with(VALID_URL_A, alert_content)
+        records = [
+            json.loads(line)
+            for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [record["event"] for record in records],
+            [
+                "handler_delivery_eligible",
+                "handler_delivery_attempted",
+                "handler_delivery_succeeded",
+            ],
+        )
+        self.assertTrue(all(set(record) == {"event", "route"} for record in records))
+        serialized = lifecycle_path.read_text(encoding="utf-8")
+        for prohibited in (VALID_URL_A, "token-A", alert_content, "request"):
+            self.assertNotIn(prohibited, serialized)
+
+    def test_failed_route_resolution_has_one_sanitized_terminal_event(self):
+        name = discord_routes.ROUTE_NAMES[0]
+        lifecycle_path = self.root / "logs" / "handler_delivery.log"
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            discord_routes, "post_discord_webhook"
+        ) as post:
+            with self.assertRaises(discord_routes.RouteConfigurationError):
+                discord_routes.deliver_alert(
+                    name,
+                    "sensitive alert body",
+                    mode="live",
+                    lifecycle_log_path=lifecycle_path,
+                )
+        post.assert_not_called()
+        records = [
+            json.loads(line)
+            for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [record["event"] for record in records],
+            [
+                "handler_delivery_eligible",
+                "handler_delivery_failed",
+            ],
+        )
+        self.assertNotIn("sensitive alert body", lifecycle_path.read_text(encoding="utf-8"))
+
+    def test_local_alert_log_failure_is_a_delivery_failure(self):
+        name = discord_routes.ROUTE_NAMES[0]
+        lifecycle_path = self.root / "logs" / "handler_delivery.log"
+        invalid_alert_log = self.root / "alerts-as-directory"
+        invalid_alert_log.mkdir()
+        with mock.patch.dict(
+            os.environ,
+            {discord_routes.PLATFORM_WEBHOOK_ENV: VALID_URL_A},
+            clear=True,
+        ), mock.patch.object(discord_routes, "post_discord_webhook") as post:
+            with self.assertRaises(discord_routes.RouteDeliveryError):
+                discord_routes.deliver_alert(
+                    name,
+                    "body",
+                    mode="live",
+                    log_path=invalid_alert_log,
+                    lifecycle_log_path=lifecycle_path,
+                )
+        post.assert_not_called()
+        events = [
+            json.loads(line)["event"]
+            for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            events,
+            [
+                "handler_delivery_eligible",
+                "handler_delivery_failed",
+            ],
+        )
+
+    def test_designated_smoke_route_marks_controlled_canary(self):
+        lifecycle_path = self.root / "logs" / "handler_delivery.log"
+        with mock.patch.dict(
+            os.environ,
+            {
+                discord_routes.PLATFORM_WEBHOOK_ENV: VALID_URL_A,
+                discord_routes.CONTROLLED_CANARY_ROUTE_ENV:
+                    discord_routes.CONTROLLED_CANARY_ROUTE,
+            },
+            clear=True,
+        ), mock.patch.object(discord_routes, "post_discord_webhook"):
+            discord_routes.deliver_alert(
+                discord_routes.CONTROLLED_CANARY_ROUTE,
+                "controlled canary",
+                mode="live",
+                lifecycle_log_path=lifecycle_path,
+                allow_platform_webhook=True,
+            )
+        records = [
+            json.loads(line)
+            for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [record["event"] for record in records],
+            [
+                "handler_delivery_eligible",
+                "handler_delivery_controlled_canary",
+                "handler_delivery_attempted",
+                "handler_delivery_succeeded",
+            ],
+        )
+
+    def test_smoke_route_without_controlled_marker_is_not_a_canary(self):
+        lifecycle_path = self.root / "logs" / "handler_delivery.log"
+        with mock.patch.dict(
+            os.environ,
+            {discord_routes.PLATFORM_WEBHOOK_ENV: VALID_URL_A},
+            clear=True,
+        ), mock.patch.object(discord_routes, "post_discord_webhook"):
+            discord_routes.deliver_alert(
+                discord_routes.CONTROLLED_CANARY_ROUTE,
+                "organic matching event",
+                mode="live",
+                lifecycle_log_path=lifecycle_path,
+                allow_platform_webhook=True,
+            )
+        events = [
+            json.loads(line)["event"]
+            for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            events,
+            [
+                "handler_delivery_eligible",
+                "handler_delivery_attempted",
+                "handler_delivery_succeeded",
+            ],
+        )
+
+    def test_webhook_failure_records_failed_once_without_exception_text(self):
+        name = discord_routes.ROUTE_NAMES[0]
+        lifecycle_path = self.root / "logs" / "handler_delivery.log"
+        secret_failure = RuntimeError("transport included {}".format(VALID_URL_A))
+        with mock.patch.dict(
+            os.environ,
+            {discord_routes.PLATFORM_WEBHOOK_ENV: VALID_URL_A},
+            clear=True,
+        ), mock.patch.object(
+            discord_routes, "post_discord_webhook", side_effect=secret_failure
+        ):
+            with self.assertRaises(RuntimeError):
+                discord_routes.deliver_alert(
+                    name,
+                    "body",
+                    mode="live",
+                    lifecycle_log_path=lifecycle_path,
+                    allow_platform_webhook=True,
+                )
+        records = [
+            json.loads(line)
+            for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(records[-1]["event"], "handler_delivery_failed")
+        self.assertEqual(
+            sum(record["event"] == "handler_delivery_failed" for record in records), 1
+        )
+        self.assertNotIn(VALID_URL_A, lifecycle_path.read_text(encoding="utf-8"))
 
     def test_confirmed_post_disables_mentions_and_never_leaks_failure_url(self):
         response = mock.MagicMock()

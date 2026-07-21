@@ -29,6 +29,7 @@ class DeliveryAdapterTests(unittest.TestCase):
                 os.environ,
                 {
                     "TELLOR_ALERT_DELIVERY_MODE": "log-only",
+                    "TELLOR_DELIVERY_MODE": "live",
                     "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/123/retired",
                 },
                 clear=False,
@@ -55,7 +56,12 @@ class DeliveryAdapterTests(unittest.TestCase):
             os.chmod(route_file, 0o600)
             self.assertEqual(stat.S_IMODE(route_directory.stat().st_mode), 0o700)
             log_path = Path(directory) / "alerts.log"
-            with mock.patch.object(tellor_lib, "ALERT_LOG", str(log_path)), mock.patch.dict(
+            lifecycle_path = Path(directory) / "handler_delivery.log"
+            with mock.patch.object(
+                tellor_lib, "ALERT_LOG", str(log_path)
+            ), mock.patch.object(
+                tellor_lib, "HANDLER_DELIVERY_LOG", str(lifecycle_path)
+            ), mock.patch.dict(
                 os.environ,
                 {
                     "TELLOR_ALERT_DELIVERY_MODE": "live",
@@ -71,9 +77,74 @@ class DeliveryAdapterTests(unittest.TestCase):
                 "https://discord.com/api/webhooks/123/routed", "routed record"
             )
 
+    def test_platform_mode_and_single_materialized_webhook_are_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "alerts.log"
+            lifecycle_path = Path(directory) / "handler_delivery.log"
+            with mock.patch.object(
+                tellor_lib, "ALERT_LOG", str(log_path)
+            ), mock.patch.object(
+                tellor_lib, "HANDLER_DELIVERY_LOG", str(lifecycle_path)
+            ), mock.patch.dict(
+                os.environ,
+                {
+                    "TELLOR_DELIVERY_MODE": "live",
+                    "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/123/platform",
+                },
+                clear=True,
+            ), mock.patch("discord_routes.post_discord_webhook") as post:
+                delivered = tellor_lib.send_alert(FakeMatch(), "platform record")
+
+            self.assertTrue(delivered)
+            post.assert_called_once_with(
+                "https://discord.com/api/webhooks/123/platform", "platform record"
+            )
+            events = [
+                json.loads(line)["event"]
+                for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                events,
+                [
+                    "handler_delivery_eligible",
+                    "handler_delivery_attempted",
+                    "handler_delivery_succeeded",
+                ],
+            )
+
+    def test_legacy_live_mode_never_falls_back_to_shared_webhook(self):
+        with tempfile.TemporaryDirectory() as directory:
+            alert_path = Path(directory) / "alerts.log"
+            lifecycle_path = Path(directory) / "handler_delivery.log"
+            with mock.patch.object(
+                tellor_lib, "ALERT_LOG", str(alert_path)
+            ), mock.patch.object(
+                tellor_lib, "HANDLER_DELIVERY_LOG", str(lifecycle_path)
+            ), mock.patch.dict(
+                os.environ,
+                {
+                    "TELLOR_ALERT_DELIVERY_MODE": "live",
+                    "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/123/stale",
+                },
+                clear=True,
+            ), mock.patch("discord_routes.post_discord_webhook") as post:
+                with self.assertRaisesRegex(RuntimeError, "no configured Discord route"):
+                    tellor_lib.send_alert(FakeMatch(), "must fail closed")
+
+            post.assert_not_called()
+            events = [
+                json.loads(line)["event"]
+                for line in lifecycle_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                events,
+                ["handler_delivery_eligible", "handler_delivery_failed"],
+            )
+
     def test_missing_delivery_mode_fails_instead_of_implicit_log_only(self):
         environment = dict(os.environ)
         environment.pop("TELLOR_ALERT_DELIVERY_MODE", None)
+        environment.pop("TELLOR_DELIVERY_MODE", None)
         with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(
             tellor_lib, "post_discord_webhook"
         ) as post:

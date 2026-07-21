@@ -15,9 +15,14 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from discord_routes import DELIVERY_MODE_ENV, deliver_alert
+from discord_routes import (
+    DELIVERY_MODE_ENV,
+    PLATFORM_DELIVERY_MODE_ENV,
+    deliver_alert,
+)
 
 ALERT_LOG = "logs/alerts.log"  # /app/logs inside the container, mounted rw
+HANDLER_DELIVERY_LOG = "logs/handler_delivery.log"
 DISCORD_CONTENT_LIMIT = 2000
 
 EXPLORER_TX = {
@@ -869,16 +874,18 @@ def _append_custom_alert_log(match, content, mode):
 def send_alert(match, content, webhook_env=None):
     """Deliver one alert using an explicit live or log-only mode.
 
-    Checked-in Tellor producers route by their exact monitor name through the
-    secure ``DISCORD_WEBHOOKS_FILE`` loader.  The generated quickstart remains
-    intentionally isolated on ``CUSTOM_DISCORD_WEBHOOK_URL``; no production
-    producer can fall back to that value or the retired shared webhook.
+    Checked-in Tellor producers prefer exact monitor-name routes through the
+    secure ``DISCORD_WEBHOOKS_FILE`` loader. The production platform may
+    instead materialize its one fixed ``DISCORD_WEBHOOK_URL``. The generated
+    quickstart remains isolated on ``CUSTOM_DISCORD_WEBHOOK_URL``.
     """
-    mode = os.environ.get(DELIVERY_MODE_ENV)
+    legacy_mode = os.environ.get(DELIVERY_MODE_ENV)
+    platform_mode = os.environ.get(PLATFORM_DELIVERY_MODE_ENV)
+    mode = legacy_mode or platform_mode
     if mode not in ("live", "log-only"):
         raise RuntimeError(
-            "{} must be explicitly set to live or log-only".format(
-                DELIVERY_MODE_ENV
+            "{} or {} must be explicitly set to live or log-only".format(
+                DELIVERY_MODE_ENV, PLATFORM_DELIVERY_MODE_ENV
             )
         )
 
@@ -900,4 +907,6 @@ def send_alert(match, content, webhook_env=None):
         mode=mode,
         log_path=ALERT_LOG,
         context={"network": match.network, "tx": match.tx_hash},
+        lifecycle_log_path=HANDLER_DELIVERY_LOG,
+        allow_platform_webhook=not bool(legacy_mode),
     )

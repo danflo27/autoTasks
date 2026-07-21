@@ -49,9 +49,20 @@ REQUIRED_ROUTE_NAMES = tuple(
 
 ROUTE_PATH_ENV = "DISCORD_WEBHOOKS_FILE"
 DELIVERY_MODE_ENV = "TELLOR_ALERT_DELIVERY_MODE"
+PLATFORM_DELIVERY_MODE_ENV = "TELLOR_DELIVERY_MODE"
+PLATFORM_WEBHOOK_ENV = "DISCORD_WEBHOOK_URL"
+CONTROLLED_CANARY_ROUTE_ENV = "TELLOR_HANDLER_CONTROLLED_CANARY_ROUTE"
 DELIVERY_MODES = frozenset({"live", "log-only"})
 DISCORD_CONTENT_LIMIT = 2000
 MAX_ROUTE_FILE_BYTES = 128 * 1024
+HANDLER_DELIVERY_EVENTS = frozenset({
+    "handler_delivery_eligible",
+    "handler_delivery_controlled_canary",
+    "handler_delivery_attempted",
+    "handler_delivery_succeeded",
+    "handler_delivery_failed",
+})
+CONTROLLED_CANARY_ROUTE = "Smoke Test USDC Transfer"
 
 _WEBHOOK_PATH_RE = re.compile(
     r"/api(?:/v[0-9]+)?/webhooks/[0-9]+/[A-Za-z0-9._-]+"
@@ -339,12 +350,71 @@ def _append_alert_log(log_path, monitor_name, content, mode, context):
         raise RouteDeliveryError("local alert logging failed") from None
 
 
-def deliver_alert(monitor_name, content, *, mode, log_path=None, context=None):
+def _append_handler_lifecycle(log_path, event, route):
+    """Write one metric-bearing record with an intentionally closed schema."""
+    if event not in HANDLER_DELIVERY_EVENTS or route not in MONITOR_ROUTE_NAMES:
+        raise RouteDeliveryError("handler delivery lifecycle record is invalid")
+    record = {
+        "event": event,
+        "route": route,
+    }
+    descriptor = None
+    try:
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(path, flags, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8", closefd=True) as stream:
+            descriptor = None
+            stream.write(json.dumps(record, separators=(",", ":")) + "\n")
+    except (OSError, TypeError, ValueError):
+        raise RouteDeliveryError("handler delivery lifecycle logging failed") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _production_webhook(monitor_name, *, allow_platform_webhook):
+    """Resolve the secure per-route file or the platform's single fixed route."""
+    if os.environ.get(ROUTE_PATH_ENV, "").strip():
+        webhook = load_discord_routes().get(monitor_name)
+        if webhook is None:
+            raise RouteConfigurationError(
+                "enabled alert producer has no configured Discord route"
+            )
+        return webhook
+    if not allow_platform_webhook:
+        raise RouteConfigurationError(
+            "enabled alert producer has no configured Discord route"
+        )
+    webhook = os.environ.get(PLATFORM_WEBHOOK_ENV, "")
+    if not webhook:
+        raise RouteConfigurationError(
+            "enabled alert producer has no configured Discord route"
+        )
+    return validate_webhook_url(webhook)
+
+
+def deliver_alert(
+    monitor_name,
+    content,
+    *,
+    mode,
+    log_path=None,
+    context=None,
+    lifecycle_log_path=None,
+    allow_platform_webhook=False,
+):
     """Log and deliver one alert without requiring an OpenZeppelin Match.
 
     ``mode`` is deliberately an argument rather than an implicit default.
-    Live calls reopen and revalidate ``DISCORD_WEBHOOKS_FILE`` every time so an
-    atomic replacement of the mounted route file takes effect immediately.
+    When configured, live calls reopen and revalidate ``DISCORD_WEBHOOKS_FILE``
+    every time so an atomic replacement takes effect immediately. The
+    production platform instead materializes one fixed environment route.
     """
     if monitor_name not in ROUTE_NAMES:
         raise RouteConfigurationError("alert producer name is not registered")
@@ -353,25 +423,55 @@ def deliver_alert(monitor_name, content, *, mode, log_path=None, context=None):
     if not isinstance(content, str) or not content:
         raise RouteConfigurationError("alert content must be a non-empty string")
 
-    if log_path is not None:
-        _append_alert_log(log_path, monitor_name, content, mode, context)
-
     if mode == "log-only":
+        if log_path is not None:
+            _append_alert_log(log_path, monitor_name, content, mode, context)
         return False
 
-    routes = load_discord_routes()
-    webhook = routes.get(monitor_name)
-    if webhook is None:
-        raise RouteConfigurationError(
-            "enabled alert producer has no configured Discord route"
+    if lifecycle_log_path is not None and monitor_name in MONITOR_ROUTE_NAMES:
+        _append_handler_lifecycle(
+            lifecycle_log_path, "handler_delivery_eligible", monitor_name
         )
-    post_discord_webhook(webhook, content)
+        if (
+            monitor_name == CONTROLLED_CANARY_ROUTE
+            and os.environ.get(CONTROLLED_CANARY_ROUTE_ENV, "").strip()
+            == monitor_name
+        ):
+            _append_handler_lifecycle(
+                lifecycle_log_path,
+                "handler_delivery_controlled_canary",
+                monitor_name,
+            )
+    try:
+        if log_path is not None:
+            _append_alert_log(log_path, monitor_name, content, mode, context)
+        webhook = _production_webhook(
+            monitor_name, allow_platform_webhook=allow_platform_webhook
+        )
+        if lifecycle_log_path is not None and monitor_name in MONITOR_ROUTE_NAMES:
+            _append_handler_lifecycle(
+                lifecycle_log_path, "handler_delivery_attempted", monitor_name
+            )
+        post_discord_webhook(webhook, content)
+    except Exception:
+        if lifecycle_log_path is not None and monitor_name in MONITOR_ROUTE_NAMES:
+            _append_handler_lifecycle(
+                lifecycle_log_path, "handler_delivery_failed", monitor_name
+            )
+        raise
+    if lifecycle_log_path is not None and monitor_name in MONITOR_ROUTE_NAMES:
+        _append_handler_lifecycle(
+            lifecycle_log_path, "handler_delivery_succeeded", monitor_name
+        )
     return True
 
 
 __all__ = (
+    "CONTROLLED_CANARY_ROUTE",
+    "CONTROLLED_CANARY_ROUTE_ENV",
     "DELIVERY_MODE_ENV",
     "DELIVERY_MODES",
+    "HANDLER_DELIVERY_EVENTS",
     "DiscordRouteError",
     "HOST_ROUTE_NAMES",
     "MONITOR_ROUTE_NAMES",
@@ -379,6 +479,8 @@ __all__ = (
     "REQUIRED_ROUTE_NAMES",
     "ROUTE_NAMES",
     "ROUTE_PATH_ENV",
+    "PLATFORM_DELIVERY_MODE_ENV",
+    "PLATFORM_WEBHOOK_ENV",
     "RouteConfigurationError",
     "RouteDeliveryError",
     "deliver_alert",
