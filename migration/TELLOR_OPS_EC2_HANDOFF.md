@@ -4,6 +4,89 @@ Snapshot for the next agent. Original inventory captured **2026-07-21 ~04:48 UTC
 
 **Audit note (2026-07-21 04:52–04:59 UTC):** the AWS control plane and host were re-read without changing them, and the local `autoTasks`, `CPI`, and `layer-daemons` worktrees were checked against this document. Runtime facts below remain point-in-time observations, not desired state. Secret values were not read during the audit. Do not treat values in chat history or backups as current; use the designated secret store after the source-of-truth problem below is resolved.
 
+## Continuation checkpoint — 2026-07-21T17:15:36Z / 2026-07-21 13:15:36 EDT
+
+> **Evidence boundary:** this is an additive, local Major-provenance checkpoint.
+> No AWS API, SSM, host, service, timer, secret, or destination was read or
+> changed. The original point-in-time inventory below is preserved and remains
+> the last live audit snapshot; this checkpoint does not revalidate it.
+
+### Status classification
+
+**Locally closed and reproducible:**
+
+- `autoTasks`: commits `f31ecda34cfb910daa362feefe060f223e3081a7` and
+  `721679ce5fd8f44ba1422838b5300a2cf4944370`; 126 discovery tests, 33
+  handler/config checks, 42 quickstart tests, and 13 host-operations tests
+  passed.
+- `CPI`: commit `9efa574fbd5efefb5588a528ba7cbba866407fc1`; 38 tests passed,
+  including the all-`N/A` fail-closed case and the full scheduled
+  collect→calculate→report fixture.
+- `layer-daemons`: commit `f34e0ccd50026d8fd2397cc8e851fc5065131077`;
+  `go test ./reference_price/... ./cmd/refprice-prototype` and `go test ./...`
+  passed, and the refprice binary has a reproducible self-hashed manifest path.
+- Desired-state platform: `/Users/df/Documents/aws` commit
+  `d503b471f42ab8771e2a45b5c1f040383c9eec68` on
+  `codex/tellor-ops-production-platform`; `npm run verify` passed 197/197 with
+  strict CDK synthesis and the repository secret scan. Its sole human IAM
+  contract is `tellor-codex`; `tellor-operator` remains a non-login Linux
+  service account only.
+
+**Live-open and not revalidated:**
+
+- Local CLI readback is AWS CLI `2.36.2`. The configured account-root
+  `aws login` session was reported expired; no remote identity call was made.
+- No remote AWS call, SSM session, secret read, or mutation occurred. Every
+  service, timer, secret, IAM role, host, and deployment fact below therefore
+  remains the last audit snapshot rather than current state.
+- The dependency gate remains open: the npm registry still reports stable
+  `aws-cdk-lib@2.261.0`, while its bundled `brace-expansion@5.0.6` is affected
+  by [GHSA-3jxr-9vmj-r5cp](https://github.com/advisories/GHSA-3jxr-9vmj-r5cp)
+  (`5.0.7` is patched). The production dependency audit remains nonzero, and
+  deployment scripts fail closed.
+
+### Ordered next safe checkpoint
+
+1. Upgrade to a compatible stable CDK release and restore full and production
+   dependency audits to zero.
+2. Configure and independently distribute the SSH approver trust anchor.
+3. Obtain explicit user confirmation for the one-time account-root `aws login`
+   and signed bootstrap envelope.
+4. Let Foundation create `tellor-codex`, enroll MFA, and thereafter use only
+   `tellor-codex` plus the reviewed Observer/Operator/Deployer roles for human
+   AWS access.
+5. Capture a fresh read-only Observer inventory before relying on any live
+   claim in this handoff.
+6. Review the recovery snapshot, then harden the legacy instance profile and
+   Default Host Management Configuration (DHMC) through the approved path.
+7. Publish immutable workload artifacts, rotate/materialize authoritative
+   secrets, and pass the required Monitor, CPI, and refprice canaries.
+8. Consider activation only after every preceding gate and rollback proof is
+   complete.
+
+### Major provenance
+
+- **Source map:** the four commits and local verification receipt named above;
+  `CPI/tests/test_scheduled_pipeline.py`; `layer-daemons/Makefile`,
+  `cmd/refprice-prototype/buildinfo.go`, and `reference_price/README.md`;
+  `/Users/df/Documents/aws/WORKLOAD_CONTRACT.md`,
+  `docs/BOOTSTRAP_DECISION.md`, `DEPLOYMENT_MANIFEST.json`, and
+  `verification/local-d503b471f42ab8771e2a45b5c1f040383c9eec68.json`; the
+  [npm `aws-cdk-lib` package](https://www.npmjs.com/package/aws-cdk-lib); and
+  the GitHub advisory linked above.
+- **Changed claims:** records only local closure, the current dependency
+  blocker, and the ordered safe continuation. It does not change any original
+  live inventory claim.
+- **Assumptions:** the supplied test receipts correspond to the exact commits;
+  current AWS and host state may differ from the 04:52–04:59 UTC audit.
+- **Validation:** local commit/readback checks, AWS CLI version readback, official
+  npm/advisory review, Markdown/readback/link checks, staged secret-pattern
+  scan, and `git diff --check`; no live validation was attempted.
+- **Residual risks:** all live state, root-session posture, approver trust,
+  dependency remediation, snapshots, legacy-profile/DHMC hardening, immutable
+  artifacts, secret rotation, canaries, activation, and rollback proof remain
+  open.
+
 ## TL;DR (revalidated point-in-time state)
 
 | Item | State |
