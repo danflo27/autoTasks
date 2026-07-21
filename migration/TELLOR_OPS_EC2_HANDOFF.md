@@ -4,88 +4,245 @@ Snapshot for the next agent. Original inventory captured **2026-07-21 ~04:48 UTC
 
 **Audit note (2026-07-21 04:52–04:59 UTC):** the AWS control plane and host were re-read without changing them, and the local `autoTasks`, `CPI`, and `layer-daemons` worktrees were checked against this document. Runtime facts below remain point-in-time observations, not desired state. Secret values were not read during the audit. Do not treat values in chat history or backups as current; use the designated secret store after the source-of-truth problem below is resolved.
 
-## Continuation checkpoint — 2026-07-21T17:15:36Z / 2026-07-21 13:15:36 EDT
+## Continuation checkpoint — 2026-07-21T18:09:28Z / 2026-07-21 14:09:28 EDT
 
 > **Evidence boundary:** this is an additive, local Major-provenance checkpoint.
 > No AWS API, SSM, host, service, timer, secret, or destination was read or
 > changed. The original point-in-time inventory below is preserved and remains
 > the last live audit snapshot; this checkpoint does not revalidate it.
 
-### Status classification
+### Authoritative local source checkpoint
 
-**Locally closed and reproducible:**
+| Repository | Exact local state | Verified source-interface evidence | Production-artifact state |
+|---|---|---|---|
+| Monitor / `autoTasks` | Source closure `b9dad69db6fbce29446180660bdc3fa5e052a075` on local `monitor-migration`; the handoff commit follows it locally. `.cursor/`, `.pi/`, and the dangerous legacy `migration/scripts/tellor-ops-setup.sh` remain untracked. That setup script is non-idempotent and must not be reused as a reconciler. `migration/scripts/AWS.code-workspace` is the only file from `migration/scripts/` added to version control. | 144/144 discovery tests and an overlapping 52/52 focused OCI/release/delivery/host set passed. Two clean-clone config-release builds 1.1 seconds apart were byte-identical (`c6d4f15e224ea0339a741bd23bbedbd5ab7728569f2846f04a07e64564c307fd`), and the platform safe extractor accepted 22 regular files and zero links. | Source interfaces only. No real Monitor OCI image was built or scanned, no registry digest or immutable S3 version was produced, no account-owned AMI was built, and no target-host compatibility or canary was run. |
+| CPI | `955954703d2eaaad0019a85f845b6c4873e88eef` on local `main`, three commits ahead of `origin/main`; user-owned `big_mac_prices.csv` modification and one deleted historical run artifact remain unstaged. The compatible sibling-consumer edits are verified machine-local state, not a commit. | 45/45 relevant source-interface tests passed. The 11/11 contract set and 4/4 platform-interface set also passed as focused, overlapping reruns—not 60 additional tests. Producer-generated bundles passed the platform validator: exact `CA`, `FL`, `NY` at 3/3 usable with zero duplicates, and the exact canonical 50-state sequence at 50/50 usable with zero duplicates. After the sibling consumer fix, its focused suite passed 12/12 and complete CPI discovery passed 51/51. | Cross-repository source compatibility is verified on this machine, but the consumer fix remains uncommitted and must be reviewed and committed, published, or otherwise archived before it is durable. No CPI release or AMI was built, attested, or published; no production Chrome sandbox probe, live three-state canary, four failure/cleanup scenarios, or controlled 50-state run occurred. The live production gate remains at least 45/50 useful states. |
+| Refprice / `layer-daemons` | `84700c0ed4470959d70cec445cd80ebc2218e98c` on `ref-prices`; tracked and non-ignored state is clean | The targeted six-package source command, changed-package vet, module-tidy check, and release-definition validation passed. The isolated source lane also passed `go test -count=1 ./...`. One authoritative-checkout full-suite run exited 1 only because unrelated `pricefeed/client.TestStop` called `require.NoError` from a goroutine after the test completed at `client_test.go:306–310`; all subsequently reported packages passed, and the unchanged full suite was not retried. | The local interface is reproducible, but no Refprice OCI image was built, scanned, or published, no registry digest was pinned, no AWS task or seven-run promotion was executed, and reporter submission remains deliberately disconnected. |
+| Desired-state platform | `/Users/df/Documents/aws` at `c25c10eb55aeaa3ec28daec0c564e522b9cdb821` on `codex/tellor-ops-production-platform`; clean | The provenance refresh followed the verified platform checkpoint at `d503b471f42ab8771e2a45b5c1f040383c9eec68`; `npm run verify` passed 18 test files / 197 tests plus strict synthesis. All enable flags and activation gates in `config/prod.json` remain false or unset. | `DEPLOYMENT_MANIFEST.json` remains `NOT_DEPLOYED`; release/version/hash, AMI, promotion, change-set, postdeploy, and sizing evidence coordinates remain unset. Both dependency audits remain blocked. |
 
-- `autoTasks`: commits `f31ecda34cfb910daa362feefe060f223e3081a7` and
-  `721679ce5fd8f44ba1422838b5300a2cf4944370`; 126 discovery tests, 33
-  handler/config checks, 42 quickstart tests, and 13 host-operations tests
-  passed.
-- `CPI`: commit `9efa574fbd5efefb5588a528ba7cbba866407fc1`; 38 tests passed,
-  including the all-`N/A` fail-closed case and the full scheduled
-  collect→calculate→report fixture.
-- `layer-daemons`: commit `f34e0ccd50026d8fd2397cc8e851fc5065131077`;
-  `go test ./reference_price/... ./cmd/refprice-prototype` and `go test ./...`
-  passed, and the refprice binary has a reproducible self-hashed manifest path.
-- Desired-state platform: `/Users/df/Documents/aws` commit
-  `d503b471f42ab8771e2a45b5c1f040383c9eec68` on
-  `codex/tellor-ops-production-platform`; `npm run verify` passed 197/197 with
-  strict CDK synthesis and the repository secret scan. Its sole human IAM
-  contract is `tellor-codex`; `tellor-operator` remains a non-login Linux
-  service account only.
+All four named closure commits are local-only: none is contained by any locally
+known remote ref. CPI `main` tracks `origin/main` and is ahead by three;
+`monitor-migration` and `ref-prices` have no configured upstream branch, and
+the platform checkout has no configured remote or upstream. These results
+establish local source interfaces at the named commits. CPI producer/consumer
+compatibility is also verified, but the consumer side has no commit and is not
+durable source closure. They do **not** establish production artifacts,
+platform compatibility, live data quality, current AWS state, or authorization
+to activate a workload.
 
-**Live-open and not revalidated:**
+**Superseding tracked-runbook correction:**
+`migration/AWS_DOCKER_OPERATIONS.md` is already tracked at Monitor closure
+`b9dad69db6fbce29446180660bdc3fa5e052a075`, is unchanged from that commit, and
+has SHA-256
+`c3a60ea1f6bb460832f2cc80a79601cd1351852c09e3974e6b9c8856cc4f742d`.
+Do not copy or overwrite it from the host. This additive correction supersedes
+the stale original-inventory statement below that the runbook is absent while
+leaving that point-in-time text intact.
 
-- Local CLI readback is AWS CLI `2.36.2`. The configured account-root
-  `aws login` session was reported expired; no remote identity call was made.
-- No remote AWS call, SSM session, secret read, or mutation occurred. Every
-  service, timer, secret, IAM role, host, and deployment fact below therefore
-  remains the last audit snapshot rather than current state.
-- The dependency gate remains open: the npm registry still reports stable
-  `aws-cdk-lib@2.261.0`, while its bundled `brace-expansion@5.0.6` is affected
-  by [GHSA-3jxr-9vmj-r5cp](https://github.com/advisories/GHSA-3jxr-9vmj-r5cp)
-  (`5.0.7` is patched). The production dependency audit remains nonzero, and
-  deployment scripts fail closed.
+### Source-interface detail and residual boundaries
+
+- **Monitor:** the committed `migration/oci/Dockerfile` is intentionally a thin
+  wrapper over the digest-pinned prebuilt
+  `openzeppelin/openzeppelin-monitor:v1.5.0` image. It adds the source-revision
+  label, delivery-mode default, and numeric `65532:65532` user, but contains no
+  `ADD`, `COPY`, or `RUN`; it is not a full committed OpenZeppelin source fork
+  or a from-source Monitor build. The build command statically requires
+  `--pull=false`, `--network=none`, and `linux/amd64`, and the config-only
+  release producer is deterministic, but no actual OCI build, vulnerability
+  scan, non-root/read-only runtime proof, SIGINT proof, or production digest
+  exists.
+- **CPI:** source now emits separate canonical state and location fields,
+  selects the platform's exact three-state canary or all 50 states, requires a
+  pinned `CHROMEDRIVER_BIN`, preserves the browser sandbox, and fails closed on
+  invalid tax treatment and all-`N/A` results. The 3/3 and 50/50 validator
+  results were offline fixtures with test-only reference inputs; they are not
+  live Uber Eats, Chrome-sandbox, canary, monthly, or controlled-run evidence.
+  The sibling `big-mac-data-python` consumer is now compatible in machine-local
+  source: `state` is required immediately after `currency_code`; USA rows
+  require an uppercase two-letter state, while non-USA rows require an empty
+  state. Its focused tests passed 12/12 and complete CPI discovery passed 51/51.
+  No consumer commit was made because `big_mac_index/` and `tests/` were already
+  broad untracked directories and staging either risked unrelated user work.
+  This is verified but uncommitted residual state; review and commit, publish,
+  or otherwise archive that consumer source before treating the compatibility
+  fix as durable.
+- **Refprice:** `capture` and `compare` consume fixed environment contracts;
+  live DEX collection has no implicit public-RPC fallback. Controlled inputs
+  bind bucket, key, exact `versionId`, and SHA-256. Production S3-arrival inputs
+  bind bucket/key/version and hash the exact fetched version because the event
+  carries no SHA-256. Immutable outputs and receipts use `If-None-Match: *` and
+  require non-null S3 version IDs. The source implements the platform
+  production-capture receipt plus controlled capture/comparison task receipts
+  and versioned capture, approved-BRRNY, and comparison payloads.
+- **Refprice release evidence:** the source lane produced two byte-identical,
+  static Linux/amd64 builds with Go `1.23.7`, `CGO_ENABLED=0`, an exact source
+  label/tag, and a hashed CA bundle. After integration, one offline release
+  readback bound HEAD `84700c0ed4470959d70cec445cd80ebc2218e98c`, local CA
+  SHA-256 `9dae8d76e55cb08991f2b672d58999ea15560d910759c16b544f843bdffbb994`,
+  and binary SHA-256
+  `07587b60092a796071b874a1b8cc56fff7bd2ce274a0025ee27a3685c48dfe25`.
+  This proves the local non-container release interface, not a built/scanned
+  production image or a published artifact.
+
+### Stable-CDK deployment blocker
+
+The exact vulnerable production path remains
+`aws-cdk-lib@2.261.0` → bundled `minimatch@10.2.5` → bundled
+`brace-expansion@5.0.6`. [GHSA-3jxr-9vmj-r5cp](https://github.com/advisories/GHSA-3jxr-9vmj-r5cp)
+affects versions before `5.0.7`. The existing top-level override, a tested
+CDK-scoped override, and `npm audit fix` cannot replace the copy bundled inside
+the released CDK package. At the completed dependency review, official CDK
+mainline resolved `5.0.7`, but the latest stable npm package was still
+`2.261.0`; therefore no unreleased fork, audit suppression, or speculative
+lockfile edit was retained.
+
+The first machine-checkable unblock condition is a newer **stable**
+`aws-cdk-lib` that supports Node 22, installs no affected nested copy, preserves
+the exact lockfile, passes the complete verifier, and makes both audits exit
+zero:
+
+```bash
+candidate=$(npm view aws-cdk-lib@latest version)
+test "$candidate" != "2.261.0"
+npm view "aws-cdk-lib@$candidate" engines --json
+npm install --save-exact "aws-cdk-lib@$candidate"
+npm ci
+npm ls aws-cdk-lib brace-expansion --all
+npm run verify
+npm audit --omit=dev
+npm audit
+```
+
+Do not prepare a production change set until that entire condition passes and
+the resulting dependency change receives review.
+
+### Identity, approval, and live-state prerequisites
+
+- The committed approver file is still a comment-only placeholder and
+  `config/deployment-approvers.sha256` is still 64 zeroes. A real reviewed
+  Ed25519 public-key allowlist must be committed, its SHA-256 must be delivered
+  to the root operator through an independent authenticated channel, and the
+  private signing key must remain outside the repository.
+- Local AWS CLI readback remains `2.36.2`. The only configured session was
+  reported as expired account root; this checkpoint made no STS or other AWS
+  call. The one-time root bootstrap requires explicit user confirmation, an
+  MFA-protected temporary `aws login` session, the separately signed 30-minute
+  bootstrap envelope, live proof of root MFA and zero root access/signing keys,
+  and the independently delivered trust-anchor hash. Root is not a normal
+  deployment caller.
+- Foundation must then create the sole human login `tellor-codex`; enroll MFA,
+  prove browser `aws login`, prove assumption of the reviewed Observer,
+  Operator, and Deployer roles, and prove zero access keys, groups, other IAM
+  users, or direct workload permissions. `tellor-operator` remains only a
+  non-login Linux service identity.
+- After identity bootstrap, capture a fresh Observer inventory before relying
+  on any account, instance, IAM, SSM, alarm, backup, secret metadata, or service
+  fact below. The last live inventory remains the original timestamped audit.
 
 ### Ordered next safe checkpoint
 
-1. Upgrade to a compatible stable CDK release and restore full and production
-   dependency audits to zero.
-2. Configure and independently distribute the SSH approver trust anchor.
-3. Obtain explicit user confirmation for the one-time account-root `aws login`
-   and signed bootstrap envelope.
-4. Let Foundation create `tellor-codex`, enroll MFA, and thereafter use only
-   `tellor-codex` plus the reviewed Observer/Operator/Deployer roles for human
-   AWS access.
-5. Capture a fresh read-only Observer inventory before relying on any live
-   claim in this handoff.
-6. Review the recovery snapshot, then harden the legacy instance profile and
-   Default Host Management Configuration (DHMC) through the approved path.
-7. Publish immutable workload artifacts, rotate/materialize authoritative
-   secrets, and pass the required Monitor, CPI, and refprice canaries.
-8. Consider activation only after every preceding gate and rollback proof is
-   complete.
+1. Consume the first compatible stable CDK release and make both audits zero;
+   keep all workload enable flags false.
+2. Configure, review, commit, and independently distribute the SSH approver
+   trust anchor; prepare and separately sign the exact bootstrap envelope.
+3. Obtain explicit confirmation for the one-time MFA-backed root `aws login`,
+   execute only the signed bootstrap prerequisite, deploy Foundation through
+   the documented initial exception, enroll `tellor-codex`, prove its three
+   role assumptions, publish the immutable bootstrap receipt, and return root
+   to recovery-only custody. The temporary bootstrap stack needs its own later
+   signed retirement envelope.
+4. Capture fresh Observer inventory. Separately approve and capture a completed
+   encrypted rollback snapshot; harden the legacy instance profile and prove
+   DHMC/Session Manager recovery before Runtime preparation or canonical secret
+   creation. Rotate the exposed webhook, establish one authoritative record per
+   secret, and prove both notification routes without exposing values.
+5. Review and durably commit, publish, or otherwise archive the verified
+   machine-local CPI consumer fix. Then build, scan, attest, immutably publish,
+   and read back exact versions/hashes
+   for the Monitor config release and real OCI image, Monitor account-owned AMI,
+   CPI release and account-owned AMI, and Refprice Linux/amd64 image. Resolve
+   both AMI build locks and every unset artifact coordinate. Decide and review
+   whether the Monitor thin wrapper is sufficient or a full OpenZeppelin source
+   fork is required before assigning a production source claim.
+6. Deploy Foundation and Runtime with every workload disabled through separately
+   reviewed, signed exact change sets; reproduce postdeploy effective controls,
+   backup/rollback coordinates, alarms, audit, logging, patching, and recovery.
+7. Pass production-boundary evidence: Monitor notification-disabled replay,
+   alert, checkpoint, restore, SIGINT, and forced singleton replacement; CPI
+   live sandbox, exact three-state canary, all failure/abort cleanup fixtures,
+   and controlled 50-state run with at least 45 useful values; Refprice exact
+   version-binding proof and seven controlled runs with at least 30% CPU/memory
+   headroom. Reporter submission remains out of scope.
+8. Collect and immutably publish 14 representative days of one-minute Monitor
+   baseline telemetry with complete handler-delivery coverage, daily controlled
+   canaries, and workload/process/memory/disk/inode evidence. Only after the
+   baseline decision passes may an exact-next-launch-template `t3a.medium`
+   trial run for seven days; select the final shape from the reproduced
+   baseline/trial evidence. Capture a real or controlled CPI peak separately so
+   a monthly browser spike is not hidden by Monitor-only telemetry.
+9. Activate through separate diffs only after every applicable gate is true:
+   cut over Monitor with rollback proof and retain the stopped legacy host for
+   seven days; enable CPI and Refprice independently after their evidence; then
+   close only when all immutable coordinates, approvals, live postdeploy
+   readbacks, retention results, and rollback paths are recorded.
 
 ### Major provenance
 
-- **Source map:** the four commits and local verification receipt named above;
-  `CPI/tests/test_scheduled_pipeline.py`; `layer-daemons/Makefile`,
-  `cmd/refprice-prototype/buildinfo.go`, and `reference_price/README.md`;
-  `/Users/df/Documents/aws/WORKLOAD_CONTRACT.md`,
-  `docs/BOOTSTRAP_DECISION.md`, `DEPLOYMENT_MANIFEST.json`, and
-  `verification/local-d503b471f42ab8771e2a45b5c1f040383c9eec68.json`; the
-  [npm `aws-cdk-lib` package](https://www.npmjs.com/package/aws-cdk-lib); and
-  the GitHub advisory linked above.
-- **Changed claims:** records only local closure, the current dependency
-  blocker, and the ordered safe continuation. It does not change any original
-  live inventory claim.
-- **Assumptions:** the supplied test receipts correspond to the exact commits;
-  current AWS and host state may differ from the 04:52–04:59 UTC audit.
-- **Validation:** local commit/readback checks, AWS CLI version readback, official
-  npm/advisory review, Markdown/readback/link checks, staged secret-pattern
-  scan, and `git diff --check`; no live validation was attempted.
-- **Residual risks:** all live state, root-session posture, approver trust,
-  dependency remediation, snapshots, legacy-profile/DHMC hardening, immutable
-  artifacts, secret rotation, canaries, activation, and rollback proof remain
-  open.
+- **Source map:** the exact four HEADs in the table; `migration/oci/Dockerfile`,
+  `migration/AWS_DOCKER_OPERATIONS.md`,
+  `migration/ops/build_monitor_image.py`,
+  `migration/ops/monitor_platform_release.py`, and their Monitor delivery/release
+  tests; the untracked `migration/scripts/tellor-ops-setup.sh` was read only to
+  confirm its overwrite/enable behavior, while `AWS.code-workspace` is the sole
+  tracked file from that directory; CPI `README.md`, `main.py`,
+  `manual_scrape/countries/usa.py`,
+  `scripts/run_big_mac_pipeline.py`, and `tests/test_{platform_interface,
+  handoff_quality_gates,scheduled_pipeline,selenium_reliability,cohort}.py`;
+  sibling `big-mac-data-python/big_mac_index/pipeline.py` and consumer tests,
+  which remain in broad untracked directories rather than a named commit;
+  Refprice `Makefile`, `cmd/refprice-prototype/{main,production,storage_s3}.go`,
+  their tests, `reference_price/container/`, schemas, and `README.md`; platform
+  `config/prod.json`, `config/deployment-approvers.*`, `WORKLOAD_CONTRACT.md`,
+  `DEPLOYMENT_MANIFEST.json`, `docs/{BOOTSTRAP_DECISION,
+  EXTERNAL_SOURCE_GATES,OPERATING_MODEL,SECURITY_EXCEPTIONS}.md`, rollout and
+  deployment runbooks, Refprice/CPI validators and schemas, `package*.json`, and
+  `verification/local-d503b471f42ab8771e2a45b5c1f040383c9eec68.json`; completed
+  source-lane and authoritative-integration test receipts; and the advisory
+  linked above.
+- **Changed claims:** replaces the stale CPI 38-test/source-closure statement
+  with exact 45-test and 3/50 validator evidence; advances all source commits;
+  records the local-only publication boundary, CPI consumer compatibility
+  verification and its uncommitted durability boundary,
+  tracked Docker-operations runbook correction, Monitor thin-wrapper limit,
+  dangerous untracked setup-script boundary, exact Refprice S3/version/receipt and
+  Linux/amd64 interfaces, the unrelated integration-suite failure, the exact
+  stable-CDK unblock condition, identity/approval preconditions, and the full
+  remaining artifact, live-evidence, activation, and sizing sequence. No
+  original live inventory claim is changed.
+- **Assumptions:** the completed lane receipts correspond to the exact commit
+  trees read back here; a future stable CDK package must be re-evaluated rather
+  than inferred from mainline; current AWS and host state may differ from the
+  04:52–04:59 UTC audit.
+- **Validation:** local commit/status/source readback; exact source-test receipt
+  readback; Markdown structure/readback, local-link, and source-map checks;
+  full runbook SHA-256 and Git-tracking readback; local remote-ref containment
+  and upstream checks; the sibling consumer's 12/12 focused pass and CPI's
+  51/51 complete discovery pass after the compatibility fix (the first
+  unprivileged discovery attempt passed 49 tests and was blocked only when two
+  notebook cases attempted a local Jupyter kernel socket); relevant
+  handoff/provenance tests; 144-test offline Monitor discovery; staged
+  secret-pattern scan; and `git diff --check`. No AWS, network, browser, host,
+  Discord, secret, build, scan, publish, or deployment validation was attempted
+  by this checkpoint.
+- **Residual risks:** the platform's external handoff-byte receipt at
+  `c25c10e` necessarily describes the pre-finalization bytes and must be
+  refreshed in a later platform-only provenance commit. The verified CPI
+  consumer fix is machine-local and uncommitted; it must be reviewed and
+  committed, published, or otherwise archived. All stable-dependency,
+  trust-anchor, root-bootstrap, live-state, backup, legacy-profile/DHMC,
+  secret-rotation, artifact/AMI, scan, canary, controlled-run, sizing,
+  deployment, activation, retention, rollback, and durable-evidence gates
+  remain open.
 
 ## TL;DR (revalidated point-in-time state)
 

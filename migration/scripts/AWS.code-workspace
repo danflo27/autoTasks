@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../CPI"
+		},
+		{
+			"path": "../../../layer-daemons"
+		}
+	],
+	"settings": {}
+}
