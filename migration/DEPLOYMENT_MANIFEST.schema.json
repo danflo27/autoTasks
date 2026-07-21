@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tellor:autoTasks:deployment-manifest:1",
+  "title": "Tellor autoTasks deployment manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_id",
+    "source",
+    "build",
+    "artifact",
+    "components",
+    "images",
+    "deployment"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "release_id": {"type": "string", "pattern": "^autoTasks@[0-9a-f]{40}$"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "tree", "dirty_patch_sha256"],
+      "properties": {
+        "repository": {"const": "autoTasks"},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "dirty_patch_sha256": {"type": "null"}
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generator", "source_timestamp_utc"],
+      "properties": {
+        "generator": {"const": "migration/ops/release_manifest.py"},
+        "source_timestamp_utc": {"type": "string", "format": "date-time"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filename", "format", "sha256", "bytes"],
+      "properties": {
+        "filename": {"type": "string", "pattern": "^autoTasks-[0-9a-f]{12}\\.tar$"},
+        "format": {"const": "git-archive-tar"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "commit", "destination"],
+        "properties": {
+          "name": {"const": "autoTasks"},
+          "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "destination": {"const": "/opt/tellor/autoTasks"}
+        }
+      }
+    },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "reference", "digest"],
+        "properties": {
+          "name": {"const": "openzeppelin-monitor"},
+          "reference": {"type": "string"},
+          "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "authorization_id",
+        "account_id",
+        "region",
+        "instance_id",
+        "deployed_at_utc",
+        "rollback_release"
+      ],
+      "properties": {
+        "status": {"enum": ["not-deployed", "deployed"]},
+        "authorization_id": {"type": ["string", "null"]},
+        "account_id": {"type": ["string", "null"], "pattern": "^\\d{12}$"},
+        "region": {"type": ["string", "null"]},
+        "instance_id": {"type": ["string", "null"], "pattern": "^i-[0-9a-f]{8,17}$"},
+        "deployed_at_utc": {"type": ["string", "null"], "format": "date-time"},
+        "rollback_release": {"type": "string", "pattern": "^autoTasks@[0-9a-f]{40}$"}
+      }
+    }
+  }
+}
