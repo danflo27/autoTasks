@@ -31,11 +31,18 @@ services:
       LOG_LEVEL: ${RUST_LOG:-info}
       LOG_MODE: ${LOG_MODE:-stdout}
       IN_DOCKER: 'true'
-    restart: on-failure:5
+      DISCORD_WEBHOOKS_FILE: /app/secrets/discord_webhooks.json
+      TELLOR_ALERT_DELIVERY_MODE: ${TELLOR_ALERT_DELIVERY_MODE:-live}
+    # Recover after runtime failures; an intentional `docker compose stop`
+    # remains stopped under this policy.
+    restart: unless-stopped
     security_opt:
       - no-new-privileges
     volumes:
       - ./config:/app/config/:ro
+      # Mount the directory so atomic host replacements become visible without
+      # recreating the container.
+      - ./secrets:/app/secrets:ro
       # Persist last-processed-block checkpoints across restarts.
       - ./data:/app/data
       - ./logs:/app/logs

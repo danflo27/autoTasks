@@ -1,8 +1,15 @@
 .env
+.env.*
+.env~
+!.env.example
 migration/data/
 migration/logs/
+migration/secrets/
 node_modules/
 .DS_Store
 __pycache__/
 migration/config/monitors/quickstart_function.json
 migration/config/triggers/quickstart_function.json
+
+# Superseded runbooks and explicitly retired local artifacts.
+archive/

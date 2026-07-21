@@ -115,13 +115,20 @@ def payload(monitor, signature, args, kind="functions"):
     }
 
 
-def submit_value(monitor, query_id, value_hex, query_data_hex):
-    return payload(monitor, "submitValue(bytes32,bytes,uint256,bytes)", [
-        ("_queryId", query_id, "bytes32"),
-        ("_value", value_hex, "bytes"),
-        ("_nonce", "1", "uint256"),
-        ("_queryData", query_data_hex, "bytes"),
-    ])
+def new_report(query_id, value_hex, query_data_hex, report_time=1_700_000_000):
+    return payload(
+        "TellorFlex Disputable Value",
+        "NewReport(bytes32,uint256,bytes,uint256,bytes,address)",
+        [
+            ("_queryId", query_id, "bytes32"),
+            ("_time", report_time, "uint256"),
+            ("_value", value_hex, "bytes"),
+            ("_nonce", "1", "uint256"),
+            ("_queryData", query_data_hex, "bytes"),
+            ("_reporter", ADDR, "address"),
+        ],
+        "events",
+    )
 
 
 # ── runner ────────────────────────────────────────────────────────────────────
@@ -130,10 +137,11 @@ def run_alert(case_payload, env_overrides=None):
     """Invoke alert.py Monitor-style; return (exit_code, new alert contents)."""
     before = line_count()
     env = {**os.environ, **(env_overrides or {})}
+    env["TELLOR_ALERT_DELIVERY_MODE"] = "log-only"
     for key, value in list(env.items()):
         if value is None:
             env.pop(key)
-    env.pop("DISCORD_WEBHOOK_URL", None)  # log-only during tests
+    env.pop("DISCORD_WEBHOOK_URL", None)  # prove the retired shared fallback is irrelevant
     with open(ALERT_PY) as f:
         content = f.read()
     proc = subprocess.run(
@@ -161,8 +169,8 @@ def check(name, case_payload, expect_alert, contains=(), excludes=(), env=None):
     problems = []
     if proc.returncode != 0:
         problems.append(f"exit={proc.returncode} stderr={proc.stderr.strip()}")
-    if expect_alert and not alerts:
-        problems.append("expected an alert, got none")
+    if expect_alert and len(alerts) != 1:
+        problems.append(f"expected exactly one alert, got {len(alerts)}")
     if not expect_alert and alerts:
         problems.append(f"expected no alert, got: {alerts}")
     for alert in alerts:
@@ -180,15 +188,23 @@ def check(name, case_payload, expect_alert, contains=(), excludes=(), env=None):
             problems.append(f"alert transaction link is not normalized: {content!r}")
         if any(not line.startswith("> ") for line in lines[1:]):
             problems.append(f"alert detail line is not normalized: {content!r}")
-        if lines[0] == "**TellorFlex Data Report**":
-            expected_fields = ("Network", "Feed", "Value", "Trusted", "Padded", "Observed")
+        if lines[0] in {
+            "**✅ Looks normal**",
+            "**👀 Report received**",
+            "**⚠️ NOT VERIFIED**",
+            "**🚨 POTENTIAL DISPUTE**",
+        }:
             actual_fields = tuple(
                 line.removeprefix("> ").split(":", 1)[0]
                 for line in lines[1:-1]
             )
-            if actual_fields != expected_fields:
+            required = (
+                "Network", "Query type", "Query ID", "Report time",
+                "Reporter", "Nonce", "Observed",
+            )
+            if any(field not in actual_fields for field in required):
                 problems.append(
-                    f"TellorFlex fields were {actual_fields}, expected {expected_fields}"
+                    f"NewReport fields were {actual_fields}, expected to include {required}"
                 )
     for needle in contains:
         if not any(needle in a["content"] for a in alerts):
@@ -204,78 +220,11 @@ def check(name, case_payload, expect_alert, contains=(), excludes=(), env=None):
         print(f"ok   {name}")
 
 
-def check_trusted_median(name, source_values, expected_trusted, query_id):
-    """Exercise the combined SpotPrice formatter without live price APIs."""
-    global PASS
-    content = []
-    calls = [0, 0, 0]
-
-    class DirectMatch:
-        network = "ethereum_mainnet"
-        tx_link = "https://etherscan.io/tx/0xabc"
-
-        def arg_map(self):
-            return {
-                "_queryId": query_id,
-                "_value": uint_value_hex(50000),
-                "_queryData": spot_query_data("btc", "usd"),
-            }
-
-    def fetcher(index):
-        def fetch(_):
-            calls[index] += 1
-            value = source_values[index]
-            if value is None:
-                raise RuntimeError("source unavailable")
-            return value
-        return fetch
-
-    originals = {
-        "coingecko_price": alert_handlers.coingecko_price,
-        "coinmarketcap_price": alert_handlers.coinmarketcap_price,
-        "coincap_price": alert_handlers.coincap_price,
-        "now_utc": alert_handlers.now_utc,
-        "send_alert": alert_handlers.send_alert,
-    }
-    try:
-        alert_handlers.coingecko_price = fetcher(0)
-        alert_handlers.coinmarketcap_price = fetcher(1)
-        alert_handlers.coincap_price = fetcher(2)
-        alert_handlers.now_utc = lambda: "2026-07-14 12:00:00 UTC"
-        alert_handlers.send_alert = lambda _match, body: content.append(body)
-        alert_handlers.handle_tellorflex_data_report(DirectMatch())
-    finally:
-        for attr, value in originals.items():
-            setattr(alert_handlers, attr, value)
-
-    expected = "\n".join((
-        "**TellorFlex Data Report**",
-        "> Network: `ethereum_mainnet`",
-        "> Feed: `BTC / USD`",
-        "> Value: `$50,000.00`",
-        f"> Trusted: `{expected_trusted}`",
-        "> Padded: `True`",
-        "> Observed: `2026-07-14 12:00:00 UTC`",
-        "> [View transaction](https://etherscan.io/tx/0xabc)",
-    ))
-    expected_calls = [0, 0, 0] if query_id == UNKNOWN_ID else [1, 1, 1]
-    problems = []
-    if content != [expected]:
-        problems.append(f"unexpected content: {content!r}")
-    if calls != expected_calls:
-        problems.append(f"source calls were {calls}, expected {expected_calls}")
-    if problems:
-        FAIL.append(f"{name}: " + "; ".join(problems))
-        print(f"FAIL {name}: " + "; ".join(problems))
-    else:
-        PASS += 1
-        print(f"ok   {name}")
-
-
 AUTOPAY_ID = "0x3ab34a189e35885414ac4e83c5a7faa9d8f03a4d530728ef516d203d91d6309c"
 ORACLE_ADDRESS_ID = "0xcf0c5863be1cf3b948a9ff43290f931399765d051a60c3b23a4e098148b1f707"
 BTC_ID = "0xa6f013ee236804827b77696d350e9f0ac3e879328f2a3021d473a0b778ad78ac"
 ETH_ID = "0x83a7f3d48786ac2667503a61e8c415438ed2922eb86a2906e4ee66d9a2ce4992"
+GYD_ID = "0x68584962e7ca6a57d672cdbfaa37c55431a84c5bb8c40d5d204a23f304f83b2e"
 CNY_ID = "0x2c81613b335c890096fd1c9a89766a2d71da2c9636505a9cb3b3dc7877cdad4b"
 UNKNOWN_ID = "0x" + "11" * 32
 ADDR = "0x5589e306b1920f009979a50b88cae32aecd471e4"
@@ -320,110 +269,49 @@ def main():
                    ("_recipient", ADDR, "address"), ("_amount", int(3e18), "uint256")], "events"),
           True, ["WithdrawFromLayer called !", "Deposit ID: `7`", "3.0 trb"])
 
-    # addressUpdates
+    # Address Updates now owns only the non-report function.
+    check("addressUpdates updateStakeAmount",
+          payload("Tellor Address Updates", "updateStakeAmount()", []),
+          True, ["updateStakeAmount was called"])
+
+    # The unified NewReport entrypoint always emits one of four canonical
+    # outcomes. These subprocess checks avoid network/RPC dependencies; the
+    # classifier unit suite covers price and historical-call branches.
+    rng_qd = hx(abi_encode(["string", "bytes"], [
+        "TellorRNG", abi_encode(["uint256"], [1_700_000_000]),
+    ]))
+    rng_value = "0x" + "a5" * 32
+    check("NewReport canonical TellorRNG is normal",
+          new_report(UNKNOWN_ID, rng_value, rng_qd),
+          True, ["✅ Looks normal", "Query type: `TellorRNG`",
+                 "Validation: `canonical structure`", rng_value])
+    unknown_qd = hx(abi_encode(["string", "bytes"], ["UnknownType", b""]))
+    check("NewReport unknown valid query is neutral",
+          new_report(UNKNOWN_ID, "0xdeadbeef", unknown_qd),
+          True, ["👀 Report received", "Query type: `UnknownType`",
+                 "unknown query type; no correctness claim"])
+    check("NewReport malformed known report is contained",
+          new_report(ETH_ID, uint_value_hex(1), "0xdeadbeef"),
+          True, ["🚨 POTENTIAL DISPUTE", "malformed known report data",
+                 "queryData has malformed ABI data"])
+
+    # Unsupported chains are explicitly unverified without making an RPC call.
+    no_rpc_qd = hx(abi_encode(["string", "bytes"], ["EVMCall", abi_encode(
+        ["uint256", "address", "bytes"], [999999, ADDR, bytes.fromhex("18160ddd")])]))
+    evmcall_value = hx(abi_encode(
+        ["bytes", "uint256"], [int(123).to_bytes(32, "big"), 1_700_000_000]
+    ))
+    check("NewReport unsupported EVMCall chain is not verified",
+          new_report(UNKNOWN_ID, evmcall_value, no_rpc_qd),
+          True, ["⚠️ NOT VERIFIED", "Chain: `999999`", ADDR,
+                 "Reason: `unsupported chain ID`"])
+
     phantom_param = abi_encode(["bytes"], [b""])
     autopay_query_data = hx(abi_encode(
         ["string", "bytes"], ["AutopayAddresses", phantom_param]
     ))
     autopay_value = hx(abi_encode(["address[]"], [[ADDR, OTHER_ADDR]]))
-    check("addressUpdates autopay report",
-          submit_value("Tellor Address Updates", AUTOPAY_ID, autopay_value, autopay_query_data),
-          True, ["Autopay addresses reported", "AutopayAddresses", "Addresses (2)", ADDR, OTHER_ADDR],
-          excludes=[autopay_query_data])
-    oracle_address_query_data = hx(abi_encode(
-        ["string", "bytes"], ["TellorOracleAddress", phantom_param]
-    ))
     oracle_address_value = hx(abi_encode(["address"], [OTHER_ADDR]))
-    check("addressUpdates oracle address report",
-          submit_value(
-              "Tellor Address Updates", ORACLE_ADDRESS_ID,
-              oracle_address_value, oracle_address_query_data,
-          ),
-          True, ["Tellor oracle address reported", "TellorOracleAddress", OTHER_ADDR],
-          excludes=[oracle_address_query_data, oracle_address_value])
-    check("addressUpdates other queryId dropped",
-          submit_value("Tellor Address Updates", UNKNOWN_ID, uint_value_hex(1), spot_query_data("a", "b")),
-          False)
-    check("addressUpdates updateStakeAmount",
-          payload("Tellor Address Updates", "updateStakeAmount()", []),
-          True, ["updateStakeAmount was called"])
-
-    # Combined datafeed + trusted-price report. Unknown query IDs retain the
-    # generic datafeed behavior without making external price requests.
-    check("TellorFlex unknown SpotPrice",
-          submit_value("TellorFlex Data Report", UNKNOWN_ID, uint_value_hex(3500.5), spot_query_data("eth", "usd")),
-          True, ["TellorFlex Data Report", "Feed: `ETH / USD`", "Value: `$3,500.50`",
-                 "Trusted: `n/a`", "Padded: `True`"],
-          excludes=["Reported:", "CoinGecko:", "CoinMarketCap:", "CoinCap:", "Average:"])
-    check_trusted_median("TellorFlex median of three sources",
-                         [100.0, 300.0, 200.0], "$200.00", BTC_ID)
-    check_trusted_median("TellorFlex median of two available sources",
-                         [100.0, None, 300.0], "$200.00", BTC_ID)
-    check_trusted_median("TellorFlex one available source",
-                         [None, 123.0, None], "$123.00", BTC_ID)
-    check_trusted_median("TellorFlex no available sources",
-                         [None, None, None], "n/a", BTC_ID)
-    check_trusted_median("TellorFlex unknown query skips price sources",
-                         [100.0, 200.0, 300.0], "n/a", UNKNOWN_ID)
-    evmcall_qd = hx(abi_encode(["string", "bytes"], ["EVMCall", abi_encode(
-        ["uint256", "address", "bytes"], [10200, ADDR, bytes.fromhex("18160ddd")])]))
-    evmcall_value = hx(abi_encode(["bytes", "uint256"], [int(123).to_bytes(32, "big"), 1700000000]))
-    check("TellorFlex EVMCall decodes the response envelope",
-          submit_value("TellorFlex Data Report", UNKNOWN_ID, evmcall_value, evmcall_qd),
-          True, ["TellorFlex Data Report", "Feed: `EVMCall (chain 10200", ADDR,
-                 "0x18160ddd", "Trusted: `n/a`", "Padded: `False`",
-                 "2023-11-14 22:13:20 UTC", "32 bytes of untyped return data"],
-          excludes=[evmcall_value])
-    check("TellorFlex malformed EVMCall envelope is labeled",
-          submit_value("TellorFlex Data Report", UNKNOWN_ID, "0x", evmcall_qd),
-          True, ["TellorFlex Data Report", "source block time unavailable",
-                 "empty malformed EVMCall response", "Trusted: `n/a`",
-                 "Padded: `False`"])
-    rng_qd = hx(abi_encode(["string", "bytes"], [
-        "TellorRNG", abi_encode(["uint256"], [1_700_000_000]),
-    ]))
-    rng_value = "0x" + "a5" * 32
-    check("TellorFlex TellorRNG labels canonical bytes32",
-          submit_value("TellorFlex Data Report", UNKNOWN_ID, rng_value, rng_qd),
-          True, ["TellorFlex Data Report", "Feed: `TellorRNG (requested after ",
-                 "2023-11-14 22:13:20 UTC", f"Value: `{rng_value}`",
-                 "Trusted: `n/a`", "Padded: `True`"],
-          excludes=[str(int(rng_value, 16))])
-    check("TellorFlex malformed TellorRNG is labeled",
-          submit_value("TellorFlex Data Report", UNKNOWN_ID, "0xdeadbeef", rng_qd),
-          True, ["TellorFlex Data Report", "4 bytes of malformed TellorRNG value",
-                 "0xdeadbeef", "Trusted: `n/a`", "Padded: `False`"])
-    unknown_qd = hx(abi_encode(["string", "bytes"], ["UnknownType", b""]))
-    check("TellorFlex unknown type stays human readable without guessing",
-          submit_value("TellorFlex Data Report", UNKNOWN_ID, "0xdeadbeef", unknown_qd),
-          True, ["TellorFlex Data Report", "Feed: `UnknownType`",
-                 "4 bytes of value data with an unavailable schema", "0xdeadbeef",
-                 "Trusted: `n/a`", "Padded: `False`"],
-          excludes=[str(int("deadbeef", 16) / 1e18)])
-
-    # dvm: an extreme BTC report always alerts, either disputed against a live
-    # reference or explicitly marked NOT VERIFIED when the reference is down.
-    check("dvm extreme BTC report alerts",
-          submit_value("Tellor DVM Price Deviation", BTC_ID, uint_value_hex(1), spot_query_data("btc", "usd")),
-          True, ["BTC / USD"])
-    check("dvm missing FX key alerts not verified",
-          submit_value("Tellor DVM Price Deviation", CNY_ID, uint_value_hex(1), spot_query_data("cny", "usd")),
-          True, ["DVM NOT VERIFIED", "CNY / USD"], env={"EXCHANGERATE_API_KEY": None})
-    check("dvm unknown id dropped",
-          submit_value("Tellor DVM Price Deviation", UNKNOWN_ID, uint_value_hex(1), spot_query_data("x", "usd")),
-          False)
-
-    # EVMCall validation
-    no_rpc_qd = hx(abi_encode(["string", "bytes"], ["EVMCall", abi_encode(
-        ["uint256", "address", "bytes"], [999999, ADDR, bytes.fromhex("18160ddd")])]))
-    check("evmCall unsupported chain -> NOT VERIFIED",
-          submit_value("Tellor EVMCall Validation", UNKNOWN_ID, evmcall_value, no_rpc_qd),
-          True, ["NOT VERIFIED", "999999", ADDR, "0x18160ddd",
-                 "2023-11-14 22:13:20 UTC", "32 bytes of untyped return data"],
-          excludes=["000000000000000000000000000000000000000000000000000000000000007b"])
-    check("evmCall non-EVMCall dropped",
-          submit_value("Tellor EVMCall Validation", ETH_ID, uint_value_hex(1), spot_query_data("eth", "usd")),
-          False)
 
     # smoke handler
     check("smoke USDC transfer",
@@ -588,25 +476,62 @@ def main():
             FAIL.append(f"{filename} should use a decoded {match_kind} and tellor_alert")
             print(f"FAIL {filename} should use a decoded {match_kind} and tellor_alert")
 
-    combined_path = os.path.join(MONITOR_DIR, "tellorflex_data_report.json")
+    combined_path = os.path.join(
+        MONITOR_DIR, "tellorflex_disputable_value.json"
+    )
     with open(combined_path) as f:
         combined_monitor = json.load(f)
-    old_monitor_paths = (
-        os.path.join(MONITOR_DIR, "datafeed.json"),
-        os.path.join(MONITOR_DIR, "price_monitor.json"),
+    address_updates_path = os.path.join(MONITOR_DIR, "address_updates.json")
+    with open(address_updates_path) as f:
+        address_updates_monitor = json.load(f)
+    old_monitor_paths = tuple(
+        os.path.join(MONITOR_DIR, filename)
+        for filename in ("dvm.json", "evm_call.json", "tellorflex_data_report.json")
     )
+    report_owners = []
+    for filename in sorted(os.listdir(MONITOR_DIR)):
+        if not filename.endswith(".json"):
+            continue
+        with open(os.path.join(MONITOR_DIR, filename)) as f:
+            monitor_config = json.load(f)
+        matches = monitor_config.get("match_conditions") or {}
+        signatures = [
+            match.get("signature")
+            for kind in ("functions", "events")
+            for match in (matches.get(kind) or [])
+        ]
+        if any(signature == alert_handlers.NEW_REPORT_SIGNATURE
+               or signature.startswith("submitValue(") for signature in signatures):
+            report_owners.append(filename)
+    report_event = combined_monitor["addresses"][0]["contract_spec"][0]
+    indexed = [entry.get("indexed") for entry in report_event["inputs"]]
+    address_signatures = [
+        match.get("signature")
+        for kind in ("functions", "events")
+        for match in address_updates_monitor["match_conditions"].get(kind, [])
+    ]
     if (
-        combined_monitor.get("name") == "TellorFlex Data Report"
+        combined_monitor.get("name") == "TellorFlex Disputable Value"
+        and combined_monitor["match_conditions"]["events"] == [{
+            "signature": alert_handlers.NEW_REPORT_SIGNATURE,
+            "expression": None,
+        }]
+        and abi_entry_signature(report_event) == alert_handlers.NEW_REPORT_SIGNATURE
+        and indexed == [True, True, False, False, False, True]
+        and report_owners == ["tellorflex_disputable_value.json"]
+        and address_signatures == ["updateStakeAmount()"]
         and not any(os.path.exists(path) for path in old_monitor_paths)
-        and "TellorFlex Data Report" in alert_handlers.HANDLERS
-        and "Tellor Datafeed" not in alert_handlers.HANDLERS
-        and "Tellor Price Monitor" not in alert_handlers.HANDLERS
+        and "TellorFlex Disputable Value" in alert_handlers.HANDLERS
+        and not {
+            "TellorFlex Data Report", "Tellor DVM Price Deviation",
+            "Tellor EVMCall Validation",
+        }.intersection(alert_handlers.HANDLERS)
     ):
         globals()["PASS"] += 1
-        print("ok   datafeed and price monitors are consolidated once")
+        print("ok   every disputable NewReport is owned by one indexed event monitor")
     else:
-        FAIL.append("datafeed and price monitors should be consolidated once")
-        print("FAIL datafeed and price monitors should be consolidated once")
+        FAIL.append("disputable NewReport coverage should have exactly one owner")
+        print("FAIL disputable NewReport coverage should have exactly one owner")
 
     for filename in sorted(os.listdir(MONITOR_DIR)):
         if not filename.endswith(".json"):

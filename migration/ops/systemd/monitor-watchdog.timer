@@ -1,0 +1,11 @@
+[Unit]
+Description=Run OpenZeppelin Monitor watchdog every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Persistent=true
+Unit=monitor-watchdog.service
+
+[Install]
+WantedBy=timers.target

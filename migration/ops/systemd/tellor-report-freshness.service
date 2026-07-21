@@ -1,0 +1,43 @@
+[Unit]
+Description=Tellor confirmed report freshness checker
+Documentation=file:/opt/tellor/autoTasks/migration/TELLOR_MONITORING_PROGRESS.md
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/opt/tellor/autoTasks/migration/report_freshness.py
+ConditionPathExists=/opt/tellor/autoTasks/migration/.env
+
+[Service]
+Type=oneshot
+User=tellor-monitoring
+Group=tellor-monitoring
+WorkingDirectory=/opt/tellor/autoTasks/migration
+EnvironmentFile=/opt/tellor/autoTasks/migration/.env
+Environment=DISCORD_WEBHOOKS_FILE=/opt/tellor/autoTasks/migration/secrets/discord_webhooks.json
+Environment=TELLOR_ALERT_DELIVERY_MODE=live
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/tellor/autoTasks/migration/report_freshness.py
+StateDirectory=tellor/report-freshness
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tellor/report-freshness
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+TimeoutStartSec=240

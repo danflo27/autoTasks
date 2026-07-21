@@ -251,9 +251,15 @@ class ValidationAndGenerationTests(unittest.TestCase):
                 return_value={quickstart.RPC_ENV: "https://rpc.example"},
             ), mock.patch.object(quickstart, "validate_mainnet_contract") as preflight, mock.patch.object(
                 quickstart, "run_compose", return_value=(0, "")
-            ):
+            ) as compose:
                 quickstart.replay(args)
             preflight.assert_called_once()
+            command = compose.call_args.args[0]
+            self.assertIn(
+                "{}=log-only".format(quickstart.DELIVERY_MODE_ENV),
+                command,
+            )
+            self.assertIn("{}=".format(quickstart.WEBHOOK_ENV), command)
 
     def test_rpc_health_skips_optional_placeholders_and_checks_mainnet(self):
         values = {
@@ -295,6 +301,97 @@ class ValidationAndGenerationTests(unittest.TestCase):
             request.get_header("Authorization"),
             "Basic " + base64.b64encode(b"user:p@ss").decode(),
         )
+
+
+class DiscordRoutePreflightTests(unittest.TestCase):
+    ROUTE_URL = "https://discord.com/api/webhooks/123/top-secret-token"
+
+    def make_fixture(self, root, *, unknown_route=False, monitor_name=None):
+        secret_dir = root / "secrets"
+        secret_dir.mkdir(mode=0o700)
+        os.chmod(secret_dir, 0o700)
+        route_file = secret_dir / "discord_webhooks.json"
+        routes = {
+            name: self.ROUTE_URL for name in quickstart.REQUIRED_ROUTE_NAMES
+        }
+        if unknown_route:
+            routes[
+                "https://discord.com/api/webhooks/999/must-not-be-printed"
+            ] = self.ROUTE_URL
+        route_file.write_text(json.dumps(routes))
+        os.chmod(route_file, 0o600)
+
+        monitor_dir = root / "monitors"
+        monitor_dir.mkdir()
+        names = list(quickstart.MONITOR_ROUTE_NAMES)
+        if monitor_name is not None:
+            names[0] = monitor_name
+        smoke = next(iter(quickstart.OPTIONAL_ROUTE_NAMES))
+        for index, name in enumerate(names):
+            (monitor_dir / "monitor-{}.json".format(index)).write_text(
+                json.dumps({"name": name, "paused": name == smoke})
+            )
+        return route_file, monitor_dir
+
+    def run_preflight(self, route_file, monitor_dir):
+        with mock.patch.object(
+            quickstart, "MONITOR_DIR", monitor_dir
+        ), mock.patch.object(
+            quickstart,
+            "read_env_values",
+            return_value={quickstart.ROUTE_PATH_ENV: str(route_file)},
+        ), mock.patch.dict(
+            os.environ, {quickstart.ROUTE_PATH_ENV: ""}, clear=False
+        ), mock.patch(
+            "builtins.print"
+        ) as printed:
+            quickstart.check_discord_routes()
+        return "\n".join(str(call.args[0]) for call in printed.call_args_list)
+
+    def test_preflight_is_redacted_and_paused_smoke_route_is_optional(self):
+        with tempfile.TemporaryDirectory() as directory:
+            route_file, monitor_dir = self.make_fixture(
+                Path(directory), unknown_route=True
+            )
+            output = self.run_preflight(route_file, monitor_dir)
+        self.assertIn("Discord route preflight passed", output)
+        self.assertIn("Smoke Test USDC Transfer: route=optional-missing", output)
+        self.assertIn("Route registry: warning unknown-count=1", output)
+        self.assertNotIn("top-secret-token", output)
+        self.assertNotIn("must-not-be-printed", output)
+        self.assertNotIn("discord.com/api", output)
+
+    def test_preflight_fails_closed_on_monitor_name_drift_without_printing_it(self):
+        hostile_name = "https://discord.com/api/webhooks/777/do-not-print"
+        with tempfile.TemporaryDirectory() as directory:
+            route_file, monitor_dir = self.make_fixture(
+                Path(directory), monitor_name=hostile_name
+            )
+            with mock.patch.object(
+                quickstart, "MONITOR_DIR", monitor_dir
+            ), mock.patch.object(
+                quickstart,
+                "read_env_values",
+                return_value={quickstart.ROUTE_PATH_ENV: str(route_file)},
+            ), mock.patch.dict(
+                os.environ, {quickstart.ROUTE_PATH_ENV: ""}, clear=False
+            ), mock.patch(
+                "builtins.print"
+            ) as printed:
+                with self.assertRaisesRegex(
+                    quickstart.QuickstartError, "preflight failed"
+                ):
+                    quickstart.check_discord_routes()
+            output = "\n".join(
+                str(call.args[0]) for call in printed.call_args_list
+            )
+        self.assertNotIn("do-not-print", output)
+        self.assertIn("Monitor registry: invalid unknown-count=1", output)
+
+    def test_cli_dispatches_check_discord_routes(self):
+        with mock.patch.object(quickstart, "check_discord_routes") as check:
+            self.assertEqual(quickstart.main(["check-discord-routes"]), 0)
+        check.assert_called_once_with()
 
 
 def _payload():

@@ -26,6 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
 ENV_EXAMPLE_PATH = BASE_DIR / ".env.example"
 MONITOR_PATH = BASE_DIR / "config" / "monitors" / "quickstart_function.json"
+MONITOR_DIR = BASE_DIR / "config" / "monitors"
 TRIGGER_PATH = BASE_DIR / "config" / "triggers" / "quickstart_function.json"
 SCRIPTS_DIR = BASE_DIR / "config" / "triggers" / "scripts"
 TRIGGER_ID = "quickstart_function_alert"
@@ -54,6 +55,23 @@ ARRAY_SUFFIX_RE = re.compile(r"(?:\[[0-9]*\])*$")
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 ENV_PLACEHOLDER_RE = re.compile(r"YOUR_[A-Z0-9_]+|<[A-Za-z0-9_-]+>")
 
+sys.path.insert(0, str(SCRIPTS_DIR))
+try:
+    from discord_routes import (
+        DELIVERY_MODE_ENV,
+        HOST_ROUTE_NAMES,
+        MONITOR_ROUTE_NAMES,
+        OPTIONAL_ROUTE_NAMES,
+        REQUIRED_ROUTE_NAMES,
+        ROUTE_NAMES,
+        ROUTE_PATH_ENV,
+        RouteConfigurationError,
+        preflight_route_statuses,
+        validate_webhook_url as validate_route_webhook_url,
+    )
+finally:
+    sys.path.pop(0)
+
 
 class QuickstartError(Exception):
     """Actionable configuration error safe to show without leaking secrets."""
@@ -80,25 +98,12 @@ def validate_rpc_url(value):
 
 
 def validate_webhook_url(value):
-    value = value.strip()
     try:
-        parsed = urlsplit(value)
-    except ValueError:
-        raise QuickstartError("Discord webhook URL is invalid") from None
-    path = parsed.path.rstrip("/")
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "discord.com"
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or not re.fullmatch(r"/api(?:/v\d+)?/webhooks/[0-9]+/[^/]+", path)
-    ):
+        return validate_route_webhook_url(value)
+    except (RouteConfigurationError, TypeError, ValueError):
         raise QuickstartError(
             "Discord webhook must look like https://discord.com/api/webhooks/<id>/<token>"
-        )
-    return value
+        ) from None
 
 
 def _split_top_level(value):
@@ -414,6 +419,97 @@ def check_rpc_health():
     print("RPC health checks passed.")
 
 
+def _configured_monitor_states(monitor_dir=None):
+    """Return production monitor name -> paused without exposing config values."""
+    monitor_dir = MONITOR_DIR if monitor_dir is None else Path(monitor_dir)
+    states = {}
+    try:
+        paths = sorted(monitor_dir.glob("*.json"))
+    except OSError:
+        raise QuickstartError("production monitor registry is unreadable") from None
+    for path in paths:
+        if path.name == MONITOR_PATH.name:
+            continue
+        try:
+            payload = json.loads(path.read_text())
+            name = payload["name"]
+            paused = payload["paused"]
+        except (OSError, KeyError, TypeError, json.JSONDecodeError):
+            raise QuickstartError("production monitor registry is invalid") from None
+        if (
+            not isinstance(name, str)
+            or not name
+            or any(ord(char) < 32 for char in name)
+            or not isinstance(paused, bool)
+            or name in states
+        ):
+            raise QuickstartError("production monitor registry is invalid")
+        states[name] = paused
+    return states
+
+
+def check_discord_routes():
+    """Validate secure routes and exact producer-name synchronization."""
+    values = read_env_values()
+    configured_path = (
+        os.environ.get(ROUTE_PATH_ENV, "").strip()
+        or values.get(ROUTE_PATH_ENV, "").strip()
+    )
+    route_path = Path(configured_path) if configured_path else None
+    if route_path is not None and not route_path.is_absolute():
+        route_path = BASE_DIR / route_path
+
+    monitor_registry_valid = True
+    try:
+        monitor_states = _configured_monitor_states()
+    except QuickstartError:
+        monitor_states = {}
+        monitor_registry_valid = False
+
+    required_names = set(REQUIRED_ROUTE_NAMES)
+    smoke_name = next(iter(OPTIONAL_ROUTE_NAMES))
+    if monitor_states.get(smoke_name) is False:
+        required_names.add(smoke_name)
+
+    statuses, unknown_route_count, routes_valid = preflight_route_statuses(
+        route_path, required_names=required_names
+    )
+
+    expected_monitor_names = set(MONITOR_ROUTE_NAMES)
+    actual_monitor_names = set(monitor_states)
+    unexpected_monitor_count = len(actual_monitor_names - expected_monitor_names)
+    monitor_registry_valid = (
+        monitor_registry_valid
+        and actual_monitor_names == expected_monitor_names
+        and monitor_states.get(smoke_name) is True
+        and all(
+            monitor_states.get(name) is False
+            for name in expected_monitor_names - {smoke_name}
+        )
+    )
+
+    for name in ROUTE_NAMES:
+        if name in HOST_ROUTE_NAMES:
+            producer_status = "host"
+        elif name not in monitor_states:
+            producer_status = "missing"
+        else:
+            producer_status = "paused" if monitor_states[name] else "enabled"
+        print("{}: route={} producer={}".format(name, statuses[name], producer_status))
+    if unknown_route_count:
+        print("Route registry: warning unknown-count={}".format(unknown_route_count))
+    if unexpected_monitor_count:
+        print(
+            "Monitor registry: invalid unknown-count={}".format(
+                unexpected_monitor_count
+            )
+        )
+
+    if not routes_valid or not monitor_registry_valid:
+        raise QuickstartError("Discord route preflight failed")
+    print("Discord route preflight passed.")
+
+
 def validate_message_template(message, abi_entry):
     if not message or not message.strip():
         raise QuickstartError("Discord message cannot be empty")
@@ -668,6 +764,7 @@ def start_monitor():
         raise QuickstartError("generated monitor configuration is missing or invalid") from None
     print("Checking mainnet chain ID and contract bytecode...")
     validate_mainnet_contract(rpc_url, validate_address(address))
+    check_discord_routes()
     check_config()
     print("Starting the monitor service...")
     run_compose(["up", "-d", "--force-recreate", "monitor"])
@@ -813,6 +910,7 @@ def configure(args):
     if should_start:
         if not webhook:
             raise QuickstartError("live start requires a Discord webhook; rerun configure without --log-only")
+        check_discord_routes()
         if not should_check:
             check_config()
         print("Starting the monitor service...")
@@ -851,8 +949,14 @@ def replay(args):
             confirmation = input("Replay will post real Discord messages. Type SEND to continue: ")
             if confirmation != "SEND":
                 raise QuickstartError("replay cancelled")
+        command += ["-e", "{}=live".format(DELIVERY_MODE_ENV)]
     else:
-        command += ["-e", "{}=".format(WEBHOOK_ENV)]
+        command += [
+            "-e",
+            "{}=log-only".format(DELIVERY_MODE_ENV),
+            "-e",
+            "{}=".format(WEBHOOK_ENV),
+        ]
         print("Discord is disabled for this replay; matches will be written to logs/alerts.log.")
     command += [
         "monitor",
@@ -891,6 +995,10 @@ def make_parser():
 
     subparsers.add_parser("check", help="run OpenZeppelin Monitor config validation")
     subparsers.add_parser("check-rpcs", help="validate configured RPC chain IDs without printing URLs")
+    subparsers.add_parser(
+        "check-discord-routes",
+        help="validate redacted production Discord route status",
+    )
     subparsers.add_parser("start", help="validate and start the monitor service")
     subparsers.add_parser("status", help="show the monitor service status")
     subparsers.add_parser("stop", help="stop the monitor service")
@@ -919,6 +1027,8 @@ def main(argv=None):
             check_config()
         elif command == "check-rpcs":
             check_rpc_health()
+        elif command == "check-discord-routes":
+            check_discord_routes()
         elif command == "start":
             start_monitor()
         elif command == "status":

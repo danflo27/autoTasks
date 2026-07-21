@@ -1,0 +1,40 @@
+[Unit]
+Description=OpenZeppelin Monitor desired-state and checkpoint watchdog
+Documentation=file:/opt/tellor/autoTasks/migration/TELLOR_MONITORING_PROGRESS.md
+Wants=network-online.target
+After=network-online.target docker.service
+ConditionPathExists=/opt/tellor/autoTasks/migration/ops/monitor_watchdog.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/tellor/autoTasks/migration
+Environment=DISCORD_WEBHOOKS_FILE=/opt/tellor/autoTasks/migration/secrets/discord_webhooks.json
+Environment=TELLOR_ALERT_DELIVERY_MODE=live
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/tellor/autoTasks/migration/ops/monitor_watchdog.py
+StateDirectory=tellor/monitor-watchdog
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProtectSystem=strict
+ReadOnlyPaths=/opt/tellor/autoTasks/migration
+ReadWritePaths=/var/lib/tellor/monitor-watchdog
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+TimeoutStartSec=60
