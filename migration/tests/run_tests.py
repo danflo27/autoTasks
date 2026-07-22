@@ -283,13 +283,11 @@ def main():
     rng_value = "0x" + "a5" * 32
     check("NewReport canonical TellorRNG is normal",
           new_report(UNKNOWN_ID, rng_value, rng_qd),
-          True, ["✅ Looks normal", "Query type: `TellorRNG`",
-                 "Validation: `canonical structure`", rng_value])
+          False)
     unknown_qd = hx(abi_encode(["string", "bytes"], ["UnknownType", b""]))
     check("NewReport unknown valid query is neutral",
           new_report(UNKNOWN_ID, "0xdeadbeef", unknown_qd),
-          True, ["👀 Report received", "Query type: `UnknownType`",
-                 "unknown query type; no correctness claim"])
+          False)
     check("NewReport malformed known report is contained",
           new_report(ETH_ID, uint_value_hex(1), "0xdeadbeef"),
           True, ["🚨 POTENTIAL DISPUTE", "malformed known report data",
@@ -313,12 +311,12 @@ def main():
     autopay_value = hx(abi_encode(["address[]"], [[ADDR, OTHER_ADDR]]))
     oracle_address_value = hx(abi_encode(["address"], [OTHER_ADDR]))
 
-    # smoke handler
+    # smoke handler never delivers to Discord
     check("smoke USDC transfer",
           payload("Smoke Test USDC Transfer", "Transfer(address,address,uint256)",
                   [("from", ADDR, "address"), ("to", ADDR, "address"),
                    ("value", 2_500_000_000_000, "uint256")], "events"),
-          True, ["Large USDC Transfer", "2,500,000.00 USDC"])
+          False)
 
     # Tellor Layer relayer / validator-set monitors. Monitor formats nested
     # tuples as Python-literal-like strings; these fixtures mirror that output.

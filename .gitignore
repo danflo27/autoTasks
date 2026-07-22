@@ -5,6 +5,8 @@
 migration/data/
 migration/logs/
 migration/secrets/
+# Local-only EC2 and agent-operations materials; never include in deployment archives.
+migration/.local/
 node_modules/
 .DS_Store
 __pycache__/

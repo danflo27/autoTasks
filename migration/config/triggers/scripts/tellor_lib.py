@@ -64,9 +64,14 @@ ADDRESS_REPORTS = {
 }
 
 # TellorFlex SpotPrice trusted references. Each entry is:
-#   label (required) plus any of: cg, cmc, coinbase, defillama, fixed
-# Failed optional sources drop out of the median; fixed is the sole reference
-# when set (used for pegged assets like GYD).
+#   label (required) plus any of: cg, cmc, coinbase, defillama, paprika,
+#   frankfurter, open_er_api, fxratesapi, fx, fixed.
+# Market-priced feeds require two usable sources before they are verified.
+# GYD is intentionally a one-reference peg: the three public market APIs below
+# do not currently publish a GYD price, so treating their absence as a market
+# price would hide a depeg rather than verify one.
+MIN_TRUSTED_PRICE_SOURCES = 2
+
 TRUSTED_PRICE_ASSETS = {
     "0xa6f013ee236804827b77696d350e9f0ac3e879328f2a3021d473a0b778ad78ac": {
         "label": "BTC / USD",
@@ -74,6 +79,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "BTC",
         "coinbase": "BTC-USD",
         "defillama": "coingecko:bitcoin",
+        "paprika": "btc-bitcoin",
     },
     "0x83a7f3d48786ac2667503a61e8c415438ed2922eb86a2906e4ee66d9a2ce4992": {
         "label": "ETH / USD",
@@ -81,6 +87,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "ETH",
         "coinbase": "ETH-USD",
         "defillama": "coingecko:ethereum",
+        "paprika": "eth-ethereum",
     },
     "0x5c13cd9c97dbb98f2429c101a2a8150e6c7a0ddaff6124ee176a3a411067ded0": {
         "label": "TRB / USD",
@@ -88,6 +95,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "TRB",
         "coinbase": "TRB-USD",
         "defillama": "coingecko:tellor",
+        "paprika": "trb-tellor",
     },
     # MATIC rebranded to POL; CoinGecko matic-network id no longer returns usd.
     "0x40aa71e5205fdc7bdb7d65f7ae41daca3820c5d3a8f62357a99eda3aa27244a3": {
@@ -96,10 +104,12 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "POL",
         "coinbase": "POL-USD",
         "defillama": "coingecko:polygon-ecosystem-token",
+        "paprika": "pol-polygon-ecosystem-token",
     },
     "0x68584962e7ca6a57d672cdbfaa37c55431a84c5bb8c40d5d204a23f304f83b2e": {
         "label": "GYD / USD",
         "fixed": 1.0,
+        "min_sources": 1,
     },
     "0x19585d912afb72378e3986a7a53f1eae1fbae792cd17e1d0df063681326823ae": {
         "label": "LTC / USD",
@@ -107,6 +117,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "LTC",
         "coinbase": "LTC-USD",
         "defillama": "coingecko:litecoin",
+        "paprika": "ltc-litecoin",
     },
     "0xafc6a3f6c18df31f1078cf038745b48e55623330715d90efe3dc7935efd44938": {
         "label": "OP / USD",
@@ -114,6 +125,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "OP",
         "coinbase": "OP-USD",
         "defillama": "coingecko:optimism",
+        "paprika": "op-optimism",
     },
     "0xefa84ae5ea9eb0545e159f78f0a44911ac5a81ecb6ff0c4e32107bcfc66c4baa": {
         "label": "BCH / USD",
@@ -121,6 +133,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "BCH",
         "coinbase": "BCH-USD",
         "defillama": "coingecko:bitcoin-cash",
+        "paprika": "bch-bitcoin-cash",
     },
     "0xb211d6f1abbd5bb431618547402a92250b765151acbe749e7f9c26dc19e5dd9a": {
         "label": "SOL / USD",
@@ -128,6 +141,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "SOL",
         "coinbase": "SOL-USD",
         "defillama": "coingecko:solana",
+        "paprika": "sol-solana",
     },
     "0x8810ffb0cfcb6131da29ed4b229f252d6bac6fc98fc4a61ffbde5b48131e0228": {
         "label": "DOT / USD",
@@ -135,6 +149,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "DOT",
         "coinbase": "DOT-USD",
         "defillama": "coingecko:polkadot",
+        "paprika": "dot-polkadot",
     },
     "0x537422e5383888586f8f9bca62c5bfd8eb0f8c1bcd335b1a691e6b550c92dcce": {
         "label": "FIL / USD",
@@ -142,14 +157,21 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "FIL",
         "coinbase": "FIL-USD",
         "defillama": "coingecko:filecoin",
+        "paprika": "fil-filecoin",
     },
     "0x7f3fc5bbf0bcc372beece1d2711095b6c884c69e21dad1180f2160adfcd8b044": {
         "label": "BRL / USD",
-        "fx": "BRL",
+        "frankfurter": "BRL",
+        "open_er_api": "BRL",
+        "fxratesapi": "BRL",
+        "fx": "BRL",  # Optional keyed fourth source.
     },
     "0x2c81613b335c890096fd1c9a89766a2d71da2c9636505a9cb3b3dc7877cdad4b": {
         "label": "CNY / USD",
-        "fx": "CNY",
+        "frankfurter": "CNY",
+        "open_er_api": "CNY",
+        "fxratesapi": "CNY",
+        "fx": "CNY",  # Optional keyed fourth source.
     },
     "0x907154958baee4fb0ce2bbe50728141ac76eb2dc1731b3d40f0890746dd07e62": {
         "label": "STETH / USD",
@@ -157,18 +179,21 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "STETH",
         "coinbase": "STETH-USD",
         "defillama": "coingecko:staked-ether",
+        "paprika": "steth-lido-staked-ether",
     },
     "0x1962cde2f19178fe2bb2229e78a6d386e6406979edc7b9a1966d89d83b3ebf2e": {
         "label": "WSTETH / USD",
         "cg": "wrapped-steth",
         "cmc": "WSTETH",
         "defillama": "coingecko:wrapped-steth",
+        "paprika": "wsteth-wrapped-liquid-staked-ether-20",
     },
     "0xfd47fa335a8c4886222ebae89a8de8d4a0187eb06c4429d3c0a7932332d2430d": {
         "label": "SWETH / USD",
         "cg": "sweth",
         "cmc": "SWETH",
         "defillama": "coingecko:sweth",
+        "paprika": "sweth-swell-ethereum",
     },
     "0xbb5e0a51ab0e06354439f377e326ca71ec8149249d163f75f543fcdc25818e76": {
         "label": "CBETH / USD",
@@ -176,6 +201,7 @@ TRUSTED_PRICE_ASSETS = {
         "cmc": "CBETH",
         "coinbase": "CBETH-USD",
         "defillama": "coingecko:coinbase-wrapped-staked-eth",
+        "paprika": "cbeth-coinbase-wrapped-staked-eth",
     },
 }
 
@@ -744,6 +770,12 @@ def defillama_price(coin_id):
     return float(data["coins"][coin_id]["price"])
 
 
+def coinpaprika_price(coin_id):
+    """CoinPaprika public USD ticker; coin_id is e.g. ``eth-ethereum``."""
+    data = http_json(f"https://api.coinpaprika.com/v1/tickers/{coin_id}")
+    return float(data["quotes"]["USD"]["price"])
+
+
 def coincap_price(cc_id):
     """Legacy CoinCap v2 helper. Host is gone; kept for tests / optional callers."""
     key = os.environ.get("COINCAP_API_KEY")
@@ -765,6 +797,28 @@ def fx_usd_rate(currency):
     return float(data["conversion_rates"]["USD"])
 
 
+def frankfurter_usd_rate(currency):
+    """Frankfurter's public ECB-backed conversion for one unit of currency."""
+    data = http_json(
+        f"https://api.frankfurter.dev/v1/latest?base={currency}&symbols=USD"
+    )
+    return float(data["rates"]["USD"])
+
+
+def open_er_api_usd_rate(currency):
+    """ExchangeRate-API's public keyless conversion for one unit of currency."""
+    data = http_json(f"https://open.er-api.com/v6/latest/{currency}")
+    return float(data["rates"]["USD"])
+
+
+def fxratesapi_usd_rate(currency):
+    """FXRatesAPI's public keyless conversion for one unit of currency."""
+    data = http_json(
+        f"https://api.fxratesapi.com/latest?base={currency}&currencies=USD"
+    )
+    return float(data["rates"]["USD"])
+
+
 def fetch_trusted_prices(asset):
     """Collect available reference prices for one TRUSTED_PRICE_ASSETS entry."""
     if "fixed" in asset:
@@ -776,6 +830,10 @@ def fetch_trusted_prices(asset):
         ("cmc", coinmarketcap_price),
         ("coinbase", coinbase_price),
         ("defillama", defillama_price),
+        ("paprika", coinpaprika_price),
+        ("frankfurter", frankfurter_usd_rate),
+        ("open_er_api", open_er_api_usd_rate),
+        ("fxratesapi", fxratesapi_usd_rate),
         ("fx", fx_usd_rate),
     ):
         source_id = asset.get(key)

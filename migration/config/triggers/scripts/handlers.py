@@ -7,7 +7,8 @@ from statistics import median
 
 from tellor_lib import (
     ADDRESS_REPORTS, EVM_CALL_RPCS, EVMCallNotVerified,
-    TELLORFLEX_PRICE_TOLERANCE, TRUSTED_PRICE_ASSETS, abi_decode_exact,
+    MIN_TRUSTED_PRICE_SOURCES, TELLORFLEX_PRICE_TOLERANCE,
+    TRUSTED_PRICE_ASSETS, abi_decode_exact,
     decode_evm_response, decode_query_data, describe_bytes,
     fetch_trusted_prices, hex_bytes, historical_evm_call_reference, now_utc,
     oracle_value, parse_structured_arg, query_id_label, send_alert,
@@ -37,6 +38,7 @@ REPORT_OUTCOMES = {
     OUTCOME_NOT_VERIFIED,
     OUTCOME_DISPUTE,
 }
+DISPUTABLE_ALERT_OUTCOMES = frozenset({OUTCOME_NOT_VERIFIED, OUTCOME_DISPUTE})
 
 DISPUTABLE_MONITOR = "TellorFlex Disputable Value"
 NEW_REPORT_SIGNATURE = "NewReport(bytes32,uint256,bytes,uint256,bytes,address)"
@@ -230,12 +232,14 @@ def _classify_spot(args, params, price_fetcher):
             continue
         if candidate.is_finite() and candidate > 0:
             usable.append(candidate)
-    if not usable:
+    required_sources = price_asset.get("min_sources", MIN_TRUSTED_PRICE_SOURCES)
+    if len(usable) < required_sources:
         return _outcome(
             OUTCOME_NOT_VERIFIED,
             ("Feed", feed),
             ("Reported", usd(reported)),
-            ("Reason", "no usable trusted price source"),
+            ("Trusted sources", len(usable)),
+            ("Reason", f"need {required_sources} usable trusted price sources"),
         )
     trusted = median(usable)
     difference = abs(reported - trusted) / trusted
@@ -421,6 +425,8 @@ def handle_disputable_value(m):
             value = unix_utc(context[key]) if key == "_time" else context[key]
             details.append((label, value))
     details.extend(outcome.details)
+    if outcome.label not in DISPUTABLE_ALERT_OUTCOMES:
+        return
     _notify(m, outcome.label, *(_field(label, value) for label, value in details))
 
 
@@ -491,15 +497,8 @@ def handle_guardian_reset_validator_set(m):
 
 
 def handle_smoke(m):
-    args = m.arg_map()
-    amount = int(args["value"]) / 1e6  # USDC has 6 decimals
-    _notify(
-        m,
-        "Large USDC Transfer",
-        _field("From", args["from"]),
-        _field("To", args["to"]),
-        _field("Amount", f"{amount:,.2f} USDC"),
-    )
+    """Large USDC transfers are never delivered to Discord."""
+    return
 
 
 HANDLERS = {

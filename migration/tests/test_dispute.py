@@ -167,6 +167,23 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("BRL / USD", labels)
         self.assertIn("CNY / USD", labels)
         self.assertIn("GYD / USD", labels)
+        for asset in tellor_lib.TRUSTED_PRICE_ASSETS.values():
+            if "fixed" in asset:
+                continue
+            if "frankfurter" in asset:
+                self.assertTrue(
+                    {"frankfurter", "open_er_api", "fxratesapi"}.issubset(asset),
+                    asset["label"],
+                )
+            else:
+                self.assertTrue(
+                    {"cg", "defillama", "paprika"}.issubset(asset), asset["label"]
+                )
+        gyd = next(
+            asset for asset in tellor_lib.TRUSTED_PRICE_ASSETS.values()
+            if asset["label"] == "GYD / USD"
+        )
+        self.assertEqual(gyd["min_sources"], 1)
         self.assertEqual(tellor_lib.TELLIOT_EVM_CALL_TAG, "v0.4.20")
         self.assertEqual(
             tellor_lib.TELLIOT_EVM_CALL_COMMIT,
@@ -179,11 +196,11 @@ class SpotAndOutcomeTests(unittest.TestCase):
         exact = report_args(BTC_ID, uint_value(120 * 10**18), spot_query())
         above = report_args(BTC_ID, uint_value(120 * 10**18 + 1), spot_query())
         self.assertEqual(
-            classify(exact, price_fetcher=lambda _: [Decimal("100")]).label,
+            classify(exact, price_fetcher=lambda _: [Decimal("100")] * 2).label,
             handlers.OUTCOME_NORMAL,
         )
         self.assertEqual(
-            classify(above, price_fetcher=lambda _: [Decimal("100")]).label,
+            classify(above, price_fetcher=lambda _: [Decimal("100")] * 2).label,
             handlers.OUTCOME_DISPUTE,
         )
 
@@ -207,16 +224,56 @@ class SpotAndOutcomeTests(unittest.TestCase):
         )
         self.assertEqual(classify(empty_unknown).label, handlers.OUTCOME_RECEIVED)
 
+    def test_market_spot_price_requires_two_usable_sources(self):
+        args = report_args(BTC_ID, uint_value(100 * 10**18), spot_query())
+        outcome = classify(args, price_fetcher=lambda _: [Decimal("100")])
+        self.assertEqual(outcome.label, handlers.OUTCOME_NOT_VERIFIED)
+        self.assertIn(("Trusted sources", 1), outcome.details)
+        self.assertIn(
+            ("Reason", "need 2 usable trusted price sources"), outcome.details
+        )
+
+
+class TrustedPriceSourceTests(unittest.TestCase):
+    def test_new_source_response_shapes_are_decoded(self):
+        def payload(url, **_kwargs):
+            if "coinpaprika" in url:
+                return {"quotes": {"USD": {"price": "100.25"}}}
+            if "frankfurter" in url:
+                return {"rates": {"USD": "0.2"}}
+            if "open.er-api" in url:
+                return {"rates": {"USD": "0.21"}}
+            if "fxratesapi" in url:
+                return {"rates": {"USD": "0.22"}}
+            self.fail(url)
+
+        with mock.patch.object(tellor_lib, "http_json", side_effect=payload):
+            self.assertEqual(tellor_lib.coinpaprika_price("btc-bitcoin"), 100.25)
+            self.assertEqual(tellor_lib.frankfurter_usd_rate("BRL"), 0.2)
+            self.assertEqual(tellor_lib.open_er_api_usd_rate("BRL"), 0.21)
+            self.assertEqual(tellor_lib.fxratesapi_usd_rate("BRL"), 0.22)
+
+    def test_collector_uses_new_public_fallbacks_and_skips_one_failure(self):
+        asset = {
+            "cg": "bitcoin",
+            "paprika": "btc-bitcoin",
+            "frankfurter": "BRL",
+        }
+        with mock.patch.object(tellor_lib, "coingecko_price", return_value=100), mock.patch.object(
+            tellor_lib, "coinpaprika_price", side_effect=RuntimeError("unavailable")
+        ), mock.patch.object(tellor_lib, "frankfurter_usd_rate", return_value=0.2):
+            self.assertEqual(tellor_lib.fetch_trusted_prices(asset), [100.0, 0.2])
+
     def test_handler_emits_each_label_once_and_never_calls_http(self):
         cases = [
             (
                 report_args(BTC_ID, uint_value(100 * 10**18), spot_query()),
-                [Decimal("100")],
+                [Decimal("100")] * 2,
                 handlers.OUTCOME_NORMAL,
             ),
             (
                 report_args(BTC_ID, uint_value(121 * 10**18), spot_query()),
-                [Decimal("100")],
+                [Decimal("100")] * 2,
                 handlers.OUTCOME_DISPUTE,
             ),
             (
@@ -231,19 +288,23 @@ class SpotAndOutcomeTests(unittest.TestCase):
             ),
         ]
         for args, prices, expected in cases:
+            expects_alert = expected in handlers.DISPUTABLE_ALERT_OUTCOMES
             with self.subTest(expected=expected), mock.patch.object(
                 handlers, "fetch_trusted_prices", return_value=prices
             ), mock.patch.object(handlers, "send_alert") as send, mock.patch.object(
                 tellor_lib, "http_json", side_effect=AssertionError("HTTP must not run")
             ):
                 handlers.handle_disputable_value(FakeMatch(args))
-                send.assert_called_once()
-                content = send.call_args.args[1]
-                self.assertEqual(content.splitlines()[0], f"**{expected}**")
-                self.assertEqual(
-                    sum(f"**{label}**" in content for label in handlers.REPORT_OUTCOMES),
-                    1,
-                )
+                if expects_alert:
+                    send.assert_called_once()
+                    content = send.call_args.args[1]
+                    self.assertEqual(content.splitlines()[0], f"**{expected}**")
+                    self.assertEqual(
+                        sum(f"**{label}**" in content for label in handlers.REPORT_OUTCOMES),
+                        1,
+                    )
+                else:
+                    send.assert_not_called()
 
     def test_malformed_known_report_is_contained_as_one_dispute(self):
         malformed = report_args(BTC_ID, "0x", spot_query())
@@ -522,17 +583,34 @@ class HistoricalFixtureTests(unittest.TestCase):
         ):
             outcome = classify(
                 decoded,
-                price_fetcher=lambda _: [reported],
+                price_fetcher=lambda _: [reported] * 2,
                 environ={},
             )
         self.assertEqual(outcome.label, handlers.OUTCOME_NORMAL)
 
-    def test_confirmed_fixture_replays_through_handler_in_explicit_log_only_mode(self):
+    def test_confirmed_normal_fixture_does_not_deliver(self):
         fixture = json.loads(
             (FIXTURE_DIR / "new_report_eth_usd_block_25526730.json").read_text()
         )
         decoded = fixture["decoded"]
         reported = Decimal(int(decoded["_value"], 16)) / Decimal(10**18)
+
+        with mock.patch.object(
+            handlers, "fetch_trusted_prices", return_value=[reported] * 2
+        ), mock.patch.object(handlers, "send_alert") as send, mock.patch.object(
+            tellor_lib, "http_json", side_effect=AssertionError("HTTP must not run")
+        ):
+            handlers.handle_disputable_value(FakeMatch(decoded))
+
+        send.assert_not_called()
+
+    def test_confirmed_dispute_fixture_replays_through_handler_in_explicit_log_only_mode(self):
+        fixture = json.loads(
+            (FIXTURE_DIR / "new_report_eth_usd_block_25526730.json").read_text()
+        )
+        decoded = fixture["decoded"]
+        reported = Decimal(int(decoded["_value"], 16)) / Decimal(10**18)
+        disputed = reported * Decimal("2")
 
         with tempfile.TemporaryDirectory() as temporary:
             log_path = Path(temporary) / "alerts.log"
@@ -551,7 +629,7 @@ class HistoricalFixtureTests(unittest.TestCase):
                 )
 
             with mock.patch.object(
-                handlers, "fetch_trusted_prices", return_value=[reported]
+                handlers, "fetch_trusted_prices", return_value=[reported] * 2
             ), mock.patch.object(
                 handlers, "send_alert", side_effect=log_only
             ) as send, mock.patch.object(
@@ -561,7 +639,9 @@ class HistoricalFixtureTests(unittest.TestCase):
                 "urlopen",
                 side_effect=AssertionError("HTTP must not run"),
             ):
-                handlers.handle_disputable_value(FakeMatch(decoded))
+                disputed_args = dict(decoded)
+                disputed_args["_value"] = hex(int(disputed * Decimal(10**18)))
+                handlers.handle_disputable_value(FakeMatch(disputed_args))
 
             send.assert_called_once()
             records = [json.loads(line) for line in log_path.read_text().splitlines()]
@@ -570,7 +650,7 @@ class HistoricalFixtureTests(unittest.TestCase):
             self.assertEqual(records[0]["source_block"], fixture["block_number"])
             self.assertEqual(
                 records[0]["content"].splitlines()[0],
-                f"**{handlers.OUTCOME_NORMAL}**",
+                f"**{handlers.OUTCOME_DISPUTE}**",
             )
 
 
