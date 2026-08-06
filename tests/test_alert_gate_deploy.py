@@ -74,6 +74,12 @@ class DeployGateCrlfTests(unittest.TestCase):
         secrets_dir.mkdir()
         _write(secrets_dir / "bridge_ledger_seed.json", "{}", 0o600)
         _write(secrets_dir / "layer_minter_seed.json", "{}", 0o600)
+        _write(secrets_dir / "rpc_ethereum_mainnet.txt", "https://primary.invalid\n", 0o600)
+        _write(
+            secrets_dir / "rpc_ethereum_mainnet_secondary.txt",
+            "https://secondary.invalid\n",
+            0o600,
+        )
 
     def _run(self, action):
         env_file = self.script_dir / ".env.production"

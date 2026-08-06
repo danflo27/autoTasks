@@ -1,6 +1,6 @@
 # Legacy autotasks
 
-This directory holds the retired OpenZeppelin Defender/Sentinel Autotask JavaScript code that the current M1-M11 alert gate replaced. It is kept for historical reference only and is **not deployable as-is** — it targeted the Defender/Sentinel runtime, not the OpenZeppelin Monitor plus alert-gate stack described in the top-level [`README.md`](../README.md) and [`docs/operations.md`](../docs/operations.md).
+This directory holds the retired OpenZeppelin Defender/Sentinel Autotask JavaScript code that the current M1-M11 alert gate replaced. It is kept for historical reference only and is **not deployable as-is**: it targeted the Defender/Sentinel runtime, not the OpenZeppelin Monitor plus alert-gate stack described in the top-level [`README.md`](../README.md) and [`docs/operations.md`](../docs/operations.md).
 
 ## Mapping to the current monitors
 

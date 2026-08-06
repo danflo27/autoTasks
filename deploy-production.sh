@@ -46,8 +46,8 @@ read_env_setting() {
   fi
 }
 
-runtime_uid=$(read_env_setting TELLOR_RUNTIME_UID 1000)
-runtime_gid=$(read_env_setting TELLOR_RUNTIME_GID 1000)
+runtime_uid=$(read_env_setting TELLOR_RUNTIME_UID 10001)
+runtime_gid=$(read_env_setting TELLOR_RUNTIME_GID 10001)
 case "$runtime_uid:$runtime_gid" in
   *[!0-9:]*|:*|*:)
     echo "TELLOR_RUNTIME_UID and TELLOR_RUNTIME_GID must be decimal IDs" >&2
@@ -100,6 +100,26 @@ do
   seed_permissions=$(stat -f '%Lp' "$seed_file" 2>/dev/null || stat -c '%a' "$seed_file")
   if [ "$seed_permissions" != "600" ]; then
     echo "$seed_file must have mode 0600" >&2
+    exit 1
+  fi
+done
+
+# alert-gate reads its Ethereum RPC providers only from these mounted
+# secrets files (RPC_ETHEREUM_MAINNET_FILE / RPC_ETHEREUM_MAINNET_SECONDARY_FILE
+# in docker-compose.production.yaml), never from a plain RPC_ETHEREUM_MAINNET*
+# environment variable, so both files are unconditionally required just like
+# the seed files above.
+for rpc_file in \
+  "$script_dir/secrets/rpc_ethereum_mainnet.txt" \
+  "$script_dir/secrets/rpc_ethereum_mainnet_secondary.txt"
+do
+  if [ ! -f "$rpc_file" ]; then
+    echo "missing required alert-gate RPC provider secret: $rpc_file" >&2
+    exit 1
+  fi
+  rpc_permissions=$(stat -f '%Lp' "$rpc_file" 2>/dev/null || stat -c '%a' "$rpc_file")
+  if [ "$rpc_permissions" != "600" ]; then
+    echo "$rpc_file must have mode 0600" >&2
     exit 1
   fi
 done

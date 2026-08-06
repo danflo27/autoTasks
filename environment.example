@@ -1,20 +1,52 @@
-# Copy this file to migration/.env.production and set mode 0600.
+# Copy this file to .env.production at the repository root and set mode 0600.
 # Never commit the populated file.
 
-TELLOR_RUNTIME_UID=1000
-TELLOR_RUNTIME_GID=1000
+# Must match the alert-gate image's baked-in non-root user (service/Dockerfile
+# creates uid/gid 10001 as `alertgate`). deploy-production.sh validates that
+# every runtime/ and secrets/ directory is owned by this exact uid:gid before
+# starting either container, so if you change this, `chown` those directories
+# to match first.
+TELLOR_RUNTIME_UID=10001
+TELLOR_RUNTIME_GID=10001
 TELLOR_ALERT_DELIVERY_MODE=log-only
 ALERT_GATE_SECOND_READ_DELAY=30
 ALERT_GATE_POLL_INTERVAL=5
 
-# OpenZeppelin Monitor and alert-gate primary provider.
+# OpenZeppelin Monitor's primary Ethereum provider. Monitor v1.5.0's own
+# config schema (config/networks/ethereum_mainnet.json) can only source an
+# rpc_urls[].url from a literal value, a plain environment variable, or a
+# Hashicorp Cloud Vault reference -- there is no file-based secret type --
+# so this plain env var is the only way to hand Monitor this URL. It
+# therefore remains readable via `docker inspect` and /proc/<pid>/environ
+# for the monitor container specifically; that is a known, currently
+# unavoidable residual exposure given the pinned image, not an oversight.
 RPC_ETHEREUM_MAINNET=
-# Required independent provider for M9-M11 agreement.
-RPC_ETHEREUM_MAINNET_SECONDARY=
+
+# alert-gate no longer reads RPC_ETHEREUM_MAINNET or
+# RPC_ETHEREUM_MAINNET_SECONDARY above -- docker-compose.production.yaml
+# points it at RPC_ETHEREUM_MAINNET_FILE / RPC_ETHEREUM_MAINNET_SECONDARY_FILE
+# instead, which must each name a 0600 regular file (following the same
+# mounted-secrets convention as DISCORD_WEBHOOKS_FILE /
+# BRIDGE_LEDGER_SEED_FILE / LAYER_MINTER_SEED_FILE) containing exactly one
+# provider URL. Populate these before `./deploy-production.sh --up-log-only`
+# or `--up-live` (both refuse to start without them):
+#   install -m 0600 /dev/null secrets/rpc_ethereum_mainnet.txt
+#   printf '%s' "https://<primary-provider-url>" > secrets/rpc_ethereum_mainnet.txt
+#   install -m 0600 /dev/null secrets/rpc_ethereum_mainnet_secondary.txt
+#   printf '%s' "https://<secondary-provider-url>" > secrets/rpc_ethereum_mainnet_secondary.txt
+# The primary URL will necessarily be the same commercial endpoint as
+# RPC_ETHEREUM_MAINNET above (Monitor and alert-gate must observe the same
+# chain); only the *transport* differs: the monitor container still takes it
+# as a plain env var (see above) while alert-gate reads it from the file.
+# Required independent provider for M9-M11 agreement; must differ from the
+# primary.
 RPC_ETHEREUM_MAINNET_NAME=ethereum-primary
 RPC_ETHEREUM_MAINNET_SECONDARY_NAME=ethereum-secondary
 
 # Historical EVMCall source chains. Ethereum uses the primary URL above.
+# These remain plain environment variables passed to alert-gate (the same
+# exposure RPC_ETHEREUM_MAINNET had before this file); moving them to the
+# mounted-secrets-file pattern was out of scope for this change.
 RPC_OPTIMISM=
 RPC_GNOSIS=
 RPC_POLYGON=

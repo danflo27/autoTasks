@@ -118,6 +118,113 @@ class AlertGateConfigurationTests(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             Settings.from_env(no_bridge_seed, require_runtime=True)
 
+    def test_rpc_url_file_is_read_when_configured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            primary_file = Path(directory) / "primary.txt"
+            secondary_file = Path(directory) / "secondary.txt"
+            primary_file.write_text("https://primary.file.invalid\n")
+            secondary_file.write_text("https://secondary.file.invalid\n")
+            primary_file.chmod(0o600)
+            secondary_file.chmod(0o600)
+            base = {
+                "RPC_ETHEREUM_MAINNET_FILE": str(primary_file),
+                "RPC_ETHEREUM_MAINNET_SECONDARY_FILE": str(secondary_file),
+                "TELLOR_LAYER_URL": "https://layer.invalid",
+                "LAYER_REPLAY_START_HEIGHT": "10",
+                "LAYER_MINTER_SEED_FILE": "/run/secrets/seed.json",
+                "BRIDGE_LEDGER_SEED_FILE": "/run/secrets/bridge-seed.json",
+                "TELLOR_ALERT_DELIVERY_MODE": "log-only",
+            }
+            settings = Settings.from_env(base, require_runtime=True)
+            self.assertEqual(
+                settings.ethereum_primary_url, "https://primary.file.invalid"
+            )
+            self.assertEqual(
+                settings.ethereum_secondary_url, "https://secondary.file.invalid"
+            )
+
+    def test_rpc_url_file_rejects_wrong_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            primary_file = Path(directory) / "primary.txt"
+            primary_file.write_text("https://primary.file.invalid\n")
+            primary_file.chmod(0o644)
+            base = {
+                "RPC_ETHEREUM_MAINNET_FILE": str(primary_file),
+                "RPC_ETHEREUM_MAINNET_SECONDARY": "https://secondary.invalid",
+                "TELLOR_LAYER_URL": "https://layer.invalid",
+                "LAYER_REPLAY_START_HEIGHT": "10",
+                "LAYER_MINTER_SEED_FILE": "/run/secrets/seed.json",
+                "BRIDGE_LEDGER_SEED_FILE": "/run/secrets/bridge-seed.json",
+                "TELLOR_ALERT_DELIVERY_MODE": "log-only",
+            }
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env(base, require_runtime=True)
+
+    def test_rpc_url_file_missing_raises(self):
+        base = {
+            "RPC_ETHEREUM_MAINNET_FILE": "/nonexistent/rpc-primary.txt",
+            "RPC_ETHEREUM_MAINNET_SECONDARY": "https://secondary.invalid",
+            "TELLOR_LAYER_URL": "https://layer.invalid",
+            "LAYER_REPLAY_START_HEIGHT": "10",
+            "LAYER_MINTER_SEED_FILE": "/run/secrets/seed.json",
+            "BRIDGE_LEDGER_SEED_FILE": "/run/secrets/bridge-seed.json",
+            "TELLOR_ALERT_DELIVERY_MODE": "log-only",
+        }
+        with self.assertRaises(ConfigurationError):
+            Settings.from_env(base, require_runtime=True)
+
+    def test_rpc_url_file_empty_content_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            primary_file = Path(directory) / "primary.txt"
+            primary_file.write_text("   \n")
+            primary_file.chmod(0o600)
+            base = {
+                "RPC_ETHEREUM_MAINNET_FILE": str(primary_file),
+                "RPC_ETHEREUM_MAINNET_SECONDARY": "https://secondary.invalid",
+                "TELLOR_LAYER_URL": "https://layer.invalid",
+                "LAYER_REPLAY_START_HEIGHT": "10",
+                "LAYER_MINTER_SEED_FILE": "/run/secrets/seed.json",
+                "BRIDGE_LEDGER_SEED_FILE": "/run/secrets/bridge-seed.json",
+                "TELLOR_ALERT_DELIVERY_MODE": "log-only",
+            }
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env(base, require_runtime=True)
+
+    def test_rpc_url_plain_and_file_together_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            primary_file = Path(directory) / "primary.txt"
+            primary_file.write_text("https://primary.file.invalid\n")
+            primary_file.chmod(0o600)
+            base = {
+                "RPC_ETHEREUM_MAINNET": "https://primary.plain.invalid",
+                "RPC_ETHEREUM_MAINNET_FILE": str(primary_file),
+                "RPC_ETHEREUM_MAINNET_SECONDARY": "https://secondary.invalid",
+                "TELLOR_LAYER_URL": "https://layer.invalid",
+                "LAYER_REPLAY_START_HEIGHT": "10",
+                "LAYER_MINTER_SEED_FILE": "/run/secrets/seed.json",
+                "BRIDGE_LEDGER_SEED_FILE": "/run/secrets/bridge-seed.json",
+                "TELLOR_ALERT_DELIVERY_MODE": "log-only",
+            }
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env(base, require_runtime=True)
+
+    def test_rpc_url_file_primary_and_secondary_identical_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            shared_file = Path(directory) / "shared.txt"
+            shared_file.write_text("https://shared.invalid\n")
+            shared_file.chmod(0o600)
+            base = {
+                "RPC_ETHEREUM_MAINNET_FILE": str(shared_file),
+                "RPC_ETHEREUM_MAINNET_SECONDARY_FILE": str(shared_file),
+                "TELLOR_LAYER_URL": "https://layer.invalid",
+                "LAYER_REPLAY_START_HEIGHT": "10",
+                "LAYER_MINTER_SEED_FILE": "/run/secrets/seed.json",
+                "BRIDGE_LEDGER_SEED_FILE": "/run/secrets/bridge-seed.json",
+                "TELLOR_ALERT_DELIVERY_MODE": "log-only",
+            }
+            with self.assertRaises(ConfigurationError):
+                Settings.from_env(base, require_runtime=True)
+
     def test_live_mode_requires_exact_thirty_second_provider_delay(self):
         environment = {
             "RPC_ETHEREUM_MAINNET": "https://primary.invalid",

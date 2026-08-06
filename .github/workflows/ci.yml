@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Test, compose config, deploy script
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the requires-python floor in pyproject.toml (>=3.9),
+          # which is what the code actually needs and what is used for
+          # local testing today.
+          python-version: "3.9"
+
+      - name: Install service dependencies
+        run: python3 -m pip install --requirement service/requirements.txt
+
+      # This single suite includes tests/test_alert_gate_config.py ::
+      # test_active_tree_excludes_superseded_monitor_stacks, which asserts
+      # that all ten retired autotask directories under legacy/ still exist
+      # there (and nowhere else). Running with -v prints each test name, so
+      # a legacy-archive regression shows up by name in the log instead of
+      # needing a separate check.
+      - name: Run unit tests (includes legacy/ archive integrity check)
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONPATH: service
+        run: python3 -m unittest discover -s tests -p 'test_alert_gate_*.py' -v
+
+      - name: Validate docker-compose.production.yaml
+        run: |
+          docker compose --env-file environment.example \
+            -f docker-compose.production.yaml config --quiet
+
+      - name: Lint deploy-production.sh (shell syntax check)
+        run: sh -n deploy-production.sh

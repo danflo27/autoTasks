@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tellor-alert-gate"
+version = "1.0.0"
+description = "Durable evaluator for the Tellor production alert-only monitor set."
+readme = "README.md"
+requires-python = ">=3.9"
+# The interpreter used for local/CI testing is 3.9.6, and the full test suite
+# passes there. The Dockerfile's python:3.12.11-slim-bookworm base image is
+# what production actually runs, but nothing in service/tellor_alert_gate
+# requires 3.10+: there are no `match` statements, no PEP 604 `X | Y` runtime
+# annotations without `from __future__ import annotations` (issuance.py,
+# freshness.py, and service.py all import it, so those files' `int | None`
+# hints are safe on 3.9), and no dict `|`/`|=` merge operators. The code does
+# use `str.removeprefix`/`removesuffix` (rpc.py, ledger.py), which is the
+# actual floor: those were added in 3.9.0. So >=3.9 reflects reality rather
+# than under- or over-claiming.
+dependencies = [
+    "annotated-types==0.7.0",
+    "certifi==2026.1.4",
+    "charset-normalizer==3.4.4",
+    "cytoolz==1.1.0",
+    "eth-abi==5.2.0",
+    "eth-hash==0.7.1",
+    "eth-typing==5.2.1",
+    "eth-utils==5.3.1",
+    "idna==3.11",
+    "parsimonious==0.10.0",
+    "pycryptodome==3.23.0",
+    "pydantic==2.12.5",
+    "pydantic_core==2.41.5",
+    "regex==2026.1.15",
+    "requests==2.32.5",
+    "toolz==1.1.0",
+    "typing-inspection==0.4.2",
+    "typing_extensions==4.15.0",
+    "urllib3==2.6.3",
+]
+
+[project.scripts]
+tellor-alert-gate = "tellor_alert_gate.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["service"]
+include = ["tellor_alert_gate*"]
+
+# Note: stdlib `unittest` has no pyproject.toml-based configuration format
+# (unlike pytest's [tool.pytest.ini_options]), so there is nothing standard
+# to add here. The suite stays runnable exactly as documented in the README:
+#   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=service python3 -m unittest discover -s tests -p 'test_alert_gate_*.py'

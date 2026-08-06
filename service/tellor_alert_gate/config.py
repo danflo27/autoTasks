@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import stat
 from typing import Dict, Optional
 
 from .constants import EVM_CALL_CHAIN_ENVS
@@ -17,6 +18,73 @@ def _required(env, name, required):
     if required and not value:
         raise ConfigurationError("{} is required".format(name))
     return value
+
+
+def _read_secret_file(path, file_setting_name):
+    """Read a single-line secret from a mounted `*_FILE` path.
+
+    Mirrors the validation `bridge_seed.read_bridge_ledger_seed` and
+    `delivery.DeliveryClient.validate_routes` already apply to their own
+    `*_FILE` settings: the target must be a regular, non-symlink file with
+    permissions no broader than 0600. Unlike those JSON secrets, an RPC URL
+    is a single opaque string, so the file content is used verbatim (after
+    stripping surrounding whitespace/newline) rather than parsed as JSON.
+    """
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise ConfigurationError(
+            "{} cannot be read".format(file_setting_name)
+        ) from error
+    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
+        raise ConfigurationError(
+            "{} must be a regular non-symlink file".format(file_setting_name)
+        )
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ConfigurationError(
+            "{} permissions are broader than 0600".format(file_setting_name)
+        )
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ConfigurationError(
+            "{} cannot be read".format(file_setting_name)
+        ) from error
+    value = raw.strip()
+    if not value:
+        raise ConfigurationError("{} is empty".format(file_setting_name))
+    return value
+
+
+def _required_url(env, name, required):
+    """Resolve a provider URL from either `NAME` or the file at `NAME_FILE`.
+
+    `NAME_FILE` follows the same mounted-secrets convention as
+    `DISCORD_WEBHOOKS_FILE` / `BRIDGE_LEDGER_SEED_FILE` /
+    `LAYER_MINTER_SEED_FILE`: a 0600 regular file under a read-only secrets
+    mount, referenced by env var rather than holding the credential in the
+    environment directly. Plain `NAME` remains supported (Monitor v1.5.0's
+    own config schema can only source `rpc_urls[].url` from a plain
+    environment variable, a literal value, or a Hashicorp Cloud Vault
+    reference -- there is no file-based secret type -- so the monitor
+    container has no choice but to receive the primary URL this way; the
+    alert-gate container supports both so operators can migrate it to the
+    file-based path without also being forced to use it).
+    """
+    file_setting_name = name + "_FILE"
+    file_value = env.get(file_setting_name, "").strip()
+    plain_value = env.get(name, "").strip()
+    if file_value and plain_value:
+        raise ConfigurationError(
+            "only one of {} and {} may be set".format(name, file_setting_name)
+        )
+    if file_value:
+        return _read_secret_file(Path(file_value), file_setting_name)
+    if required and not plain_value:
+        raise ConfigurationError(
+            "{} or {} is required".format(name, file_setting_name)
+        )
+    return plain_value
 
 
 @dataclass(frozen=True)
@@ -73,8 +141,8 @@ class Settings:
             raise ConfigurationError(
                 "live delivery requires ALERT_GATE_SECOND_READ_DELAY=30"
             )
-        primary = _required(values, "RPC_ETHEREUM_MAINNET", require_runtime)
-        secondary = _required(
+        primary = _required_url(values, "RPC_ETHEREUM_MAINNET", require_runtime)
+        secondary = _required_url(
             values, "RPC_ETHEREUM_MAINNET_SECONDARY", require_runtime
         )
         if primary and secondary and primary == secondary:
@@ -104,10 +172,22 @@ class Settings:
             raise ConfigurationError(
                 "BRIDGE_LEDGER_SEED_FILE is required for complete M4 state"
             )
+        # EVM_CALL_CHAIN_ENVS maps chain 1 to the RPC_ETHEREUM_MAINNET *env
+        # var name*, but the actual Ethereum primary URL may have come from
+        # RPC_ETHEREUM_MAINNET_FILE instead (see _required_url above), in
+        # which case that plain env var is never set. Reuse the already
+        # resolved `primary` for chain 1 so the EVMCall archive source for
+        # Ethereum stays in sync with ethereum_primary_url regardless of
+        # which source it was read from; every other chain is unaffected
+        # and still reads its own plain env var directly.
         evm_urls = {
-            chain_id: values.get(variable, "").strip()
+            chain_id: (
+                primary
+                if chain_id == 1
+                else values.get(variable, "").strip()
+            )
             for chain_id, variable in EVM_CALL_CHAIN_ENVS.items()
-            if values.get(variable, "").strip()
+            if (primary if chain_id == 1 else values.get(variable, "").strip())
         }
         return cls(
             spool_path=Path(

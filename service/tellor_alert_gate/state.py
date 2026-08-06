@@ -396,6 +396,39 @@ class StateStore:
         if unsettled:
             raise ValueError("unsettled deliveries remain in runtime state")
 
+    def poll_liveness(self, *, max_stale_seconds=300, now=None):
+        """Report whether the alert-gate's scheduled evaluation pass is still
+        advancing, for use as a genuine process-health signal.
+
+        `last_scheduled_minute` (see `AlertGate.run_once` /
+        `AlertGate.process_scheduled` in service.py) is written only after a
+        full M9-M11 scheduled evaluation *and* the M3 stale-DataBridge check
+        both complete successfully against the configured Ethereum RPC
+        providers, once per new wall-clock minute. That makes it a real
+        liveness signal rather than a trivial "is the process alive" check:
+        a poll loop that is deadlocked (e.g. stuck on the SQLite state file)
+        or wedged against a dead RPC stops advancing this value, even though
+        the process itself keeps running. A healthcheck that only proved the
+        container was up would miss exactly that failure mode.
+
+        Returns `(healthy, age_seconds)`. `age_seconds` is `None` when no
+        scheduled pass has completed yet (e.g. shortly after startup, before
+        the first pass finishes) -- callers should treat that as unhealthy
+        past a reasonable startup grace period (a Docker `start_period` is
+        the natural place for that grace), not as an indefinite pass.
+        """
+        now = utc_now() if now is None else now
+        raw = self.get_meta("last_scheduled_minute")
+        if raw is None:
+            return False, None
+        try:
+            last_minute = int(raw)
+        except (TypeError, ValueError):
+            return False, None
+        current_minute = int(now.timestamp()) // 60
+        age_seconds = max(0, current_minute - last_minute) * 60
+        return age_seconds <= max_stale_seconds, age_seconds
+
     def layer_events(self, event_type=None, height=None):
         clauses = []
         values = []

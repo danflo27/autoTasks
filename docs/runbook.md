@@ -18,7 +18,7 @@ Severities and first-response actions below are read directly from `MONITORS` an
 
 ## M2 — bridge-control (P0)
 
-**Target:** TokenBridge V1 (`0x5589e306b1920F009979a50B88caE32aecD471E4`) and TokenBridge V2 (`0x6ec401744008f4B018Ed9A36f76e6629799Ee50E`).
+**Targets:** TokenBridge V1 (`0x5589e306b1920F009979a50B88caE32aecD471E4`) and TokenBridge V2 (`0x6ec401744008f4B018Ed9A36f76e6629799Ee50E`).
 
 **Fires on:** `BridgeStateUpdated`, `PauseProposed`, `PauseApproved`, `DataBridgeUpdated`, `RoleUpdateProposed`, `RoleUpdateAccepted`, or `MintToOracleFailed` (`config/monitors/m2_bridge_control.json`).
 
@@ -34,7 +34,7 @@ Severities and first-response actions below are read directly from `MONITORS` an
 
 **Alerts when:** every guardian reset fires; the Ethereum and Tellor Layer validator sets persistently disagree; the validator timestamp fails to increase; or the validator-set age exceeds `unbondingPeriod()`, the exact boundary at which the bridge becomes unusable.
 
-**First action:** stop bridge relaying, preserve calldata and signatures, and compare the Tellor Layer validator set.
+**First action:** stop bridge relaying, preserve calldata and signatures, and compare against the Tellor Layer validator set.
 
 ## M4 — bridge-ledger-integrity (P0)
 

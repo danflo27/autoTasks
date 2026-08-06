@@ -10,11 +10,11 @@ This source map is implementation and review evidence. It does not authorize dep
 |---|---|---|
 | OpenZeppelin Monitor | `v1.5.0`, image digest `sha256:8541bcfa869577aa6e44ea85f52700f5bb66c17a75b01f2eb2be66603d172635` | Loads the eight M1-M8 EVM sensors and appends raw `MonitorMatch` records to the durable spool |
 | Alert gate image | Built from `service/Dockerfile` | Validates final Ethereum receipts and state, replays Tellor Layer blocks, evaluates M1-M11, schedules the M9-M11 absence checks, groups incidents in SQLite, and performs final delivery |
-| Alert gate Python base | `python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49` | Runs the alert gate |
+| Alert gate Python base | `python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49` | Runs the alert gate in production; `pyproject.toml` sets `requires-python = ">=3.9"` for local development and CI, which use Python 3.9 |
 
 The OpenZeppelin Monitor image pin is in [`docker-compose.production.yaml`](docker-compose.production.yaml).
 
-The alert gate image builds from [`service/Dockerfile`](service/Dockerfile). The Dockerfile pins `python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49`.
+The alert gate image builds from [`service/Dockerfile`](service/Dockerfile). The Dockerfile pins `python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49` and creates the fixed non-root `alertgate` user at uid:gid `10001:10001`, which both containers run as by default (see `docker-compose.production.yaml` and [`docs/operations.md`](docs/operations.md#host-preparation)).
 
 If an operator changes a tag or digest, run the full local test suite. Validate the Monitor image configuration. Complete a log-only replay. Then perform staged runtime readback before deployment.
 
@@ -64,8 +64,8 @@ Recheck this source map if one of these items changes:
 - A contract address.
 - A query ID.
 - A Monitor image.
-- The alert gate base image.
-- A target RPC policy.
+- The alert gate base image or runtime uid/gid.
+- A target RPC policy, including which providers are file-backed secrets versus plain environment variables.
 
 Before deployment, record the new pin and the changed tests.
 
@@ -79,8 +79,10 @@ Local fixtures and tests can prove these properties:
 - Classification.
 - Routing.
 - Calendar boundaries.
-- Retry behavior.
+- Retry behavior, including delivery-reservation reclaim and the deploy gate's env-value parsing.
 - Explicit `log-only` delivery.
+
+The suite that proves these properties is `tests/`: 61 tests as of this writing, covering M1-M11 evaluation logic (including M2, M3, M6, and the Tellor Layer side of M7), the deploy gate, and the healthcheck subcommand. `.github/workflows/ci.yml` runs this suite, a `docker compose config` validation of `docker-compose.production.yaml`, and a shell syntax check of `deploy-production.sh` on every pull request and on every push to `main` — the same three commands documented in [`README.md`](README.md#safe-local-checks).
 
 Local fixtures and tests cannot prove these properties:
 
@@ -95,8 +97,8 @@ These properties require separate authorization and current deployment or runtim
 
 ## Major provenance
 
-- **Source map:** `policy/monitors.json`, the other policy files, `service/`, `docker-compose.production.yaml`, and `deploy-production.sh` define the active implementation and its operating checks.
+- **Source map:** `policy/monitors.json`, the other policy files, `service/`, `pyproject.toml`, `docker-compose.production.yaml`, `deploy-production.sh`, and `.github/workflows/ci.yml` define the active implementation and its operating checks.
 - **Changed claims:** The old Defender and candidate documentation is not part of this active source map.
 - **Assumptions:** The map describes the intended local production design. It does not assume a current EC2 deployment or working Discord delivery.
-- **Validation:** The active evidence consists of local tests, Compose configuration validation, and deployment-script validation.
-- **Residual risks:** Validation with real endpoints, reviewed seeds, configured routes, and a completed replay is pending.
+- **Validation:** The active evidence consists of local tests, Compose configuration validation, and deployment-script validation, all reproduced by CI on every pull request and push to `main`.
+- **Residual risks:** Validation with real endpoints, reviewed seeds, configured routes, and a completed replay is pending. Separately, the `monitor` container's `RPC_ETHEREUM_MAINNET` and the alert gate's EVMCall archive provider URLs remain plain environment variables rather than mounted secret files — see [`docs/operations.md`](docs/operations.md#known-residual-exposure-the-monitor-containers-rpc-url) for why and what is and is not covered.

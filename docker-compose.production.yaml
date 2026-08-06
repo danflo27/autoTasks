@@ -4,13 +4,22 @@ services:
   monitor:
     image: openzeppelin/openzeppelin-monitor:v1.5.0@sha256:8541bcfa869577aa6e44ea85f52700f5bb66c17a75b01f2eb2be66603d172635
     platform: linux/amd64
-    user: "${TELLOR_RUNTIME_UID:-1000}:${TELLOR_RUNTIME_GID:-1000}"
+    user: "${TELLOR_RUNTIME_UID:-10001}:${TELLOR_RUNTIME_GID:-10001}"
     environment:
       ALERT_GATE_SPOOL_PATH: /app/spool/monitor-matches.jsonl
       IN_DOCKER: "true"
       LOG_LEVEL: info
       LOG_MODE: stdout
       METRICS_ENABLED: "false"
+      # OpenZeppelin Monitor v1.5.0's own config schema (see
+      # config/networks/ethereum_mainnet.json) can only source
+      # rpc_urls[].url from a literal value, a plain environment variable,
+      # or a Hashicorp Cloud Vault reference -- there is no file-based
+      # secret type -- so unlike alert-gate (below), this container has no
+      # way to receive the RPC URL except as a plain environment variable.
+      # It therefore remains readable via `docker inspect` and
+      # /proc/<pid>/environ for this container specifically; see
+      # environment.example for the full residual-exposure note.
       RPC_ETHEREUM_MAINNET: ${RPC_ETHEREUM_MAINNET:-}
     restart: unless-stopped
     read_only: true
@@ -29,6 +38,27 @@ services:
       - ./runtime/spool:/app/spool
     networks:
       - monitors
+    healthcheck:
+      # Proves the block-watcher loop is actually making progress against
+      # a live RPC, not just that the process is up. On every scheduled
+      # cycle (config/networks/ethereum_mainnet.json's cron_schedule),
+      # Monitor calls rpc_client.get_latest_block_number() and only then
+      # unconditionally rewrites data/ethereum_mainnet_last_block.txt --
+      # this happens even when there are no new blocks to process, but
+      # NOT when the RPC call itself fails. So the file's mtime advancing
+      # proves RPC connectivity + a completed cycle; it stalling proves
+      # the loop is wedged (e.g. against a dead RPC), which a bare
+      # "is the process alive" check cannot distinguish from a quiet
+      # chain. It cannot catch: the chain genuinely halting upstream, a
+      # hung *metrics* endpoint (disabled here), or a poll succeeding
+      # while producing wrong results.
+      test:
+        - CMD-SHELL
+        - "python3 -c \"import os,sys,time; p='/app/data/ethereum_mainnet_last_block.txt'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<240 else 1)\""
+      interval: 60s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
     logging:
       driver: json-file
       options:
@@ -41,11 +71,17 @@ services:
       dockerfile: Dockerfile
     image: tellor-alert-gate:2026-08-06
     platform: linux/amd64
-    user: "${TELLOR_RUNTIME_UID:-1000}:${TELLOR_RUNTIME_GID:-1000}"
-    env_file:
-      - ${TELLOR_ENV_FILE:-.env.production}
+    user: "${TELLOR_RUNTIME_UID:-10001}:${TELLOR_RUNTIME_GID:-10001}"
+    # No `env_file:` here (deliberately, unlike v1 of this file): blanket-
+    # loading .env.production would hand this container the plain-text
+    # RPC_ETHEREUM_MAINNET / RPC_ETHEREUM_MAINNET_SECONDARY values that
+    # exist only for the monitor service's benefit (see its own comment
+    # above). Every setting this container actually needs is listed
+    # explicitly below instead, so a value can only reach it on purpose.
     environment:
       ALERT_GATE_ALERTS_LOG: /var/lib/tellor-alert-gate/alerts.jsonl
+      ALERT_GATE_POLL_INTERVAL: ${ALERT_GATE_POLL_INTERVAL:-5}
+      ALERT_GATE_SECOND_READ_DELAY: ${ALERT_GATE_SECOND_READ_DELAY:-30}
       ALERT_GATE_SPOOL_PATH: /var/spool/tellor-alert-gate/monitor-matches.jsonl
       ALERT_GATE_STATE_PATH: /var/lib/tellor-alert-gate/state.sqlite3
       APPROVED_CHANGES_FILE: /etc/tellor-alert-gate/policy/approved_changes.json
@@ -53,10 +89,25 @@ services:
       DISCORD_WEBHOOKS_FILE: /run/tellor-secrets/discord_webhooks.json
       ENROLLED_DATABRIDGES_FILE: /etc/tellor-alert-gate/policy/enrolled_databridges.json
       LAYER_MINTER_SEED_FILE: /run/tellor-secrets/layer_minter_seed.json
+      LAYER_REPLAY_START_HEIGHT: ${LAYER_REPLAY_START_HEIGHT:-}
       MONITOR_CONFIG_DIR: /etc/tellor-alert-gate/monitor-config/monitors
       MONITOR_MANIFEST_FILE: /etc/tellor-alert-gate/policy/monitors.json
       RELEASE_MANIFESTS_DIR: /run/tellor-secrets/release-manifests
+      # Historical EVMCall archive sources (M5). These are also commercial
+      # RPC endpoints and are just as sensitive as RPC_ETHEREUM_MAINNET,
+      # but converting them to the mounted-secrets-file pattern is out of
+      # scope here; they keep the plain-env-var exposure this task set out
+      # to fix only for the Ethereum primary/secondary providers below.
+      RPC_CHIADO: ${RPC_CHIADO:-}
+      RPC_ETHEREUM_MAINNET_FILE: /run/tellor-secrets/rpc_ethereum_mainnet.txt
+      RPC_ETHEREUM_MAINNET_NAME: ${RPC_ETHEREUM_MAINNET_NAME:-ethereum-primary}
+      RPC_ETHEREUM_MAINNET_SECONDARY_FILE: /run/tellor-secrets/rpc_ethereum_mainnet_secondary.txt
+      RPC_ETHEREUM_MAINNET_SECONDARY_NAME: ${RPC_ETHEREUM_MAINNET_SECONDARY_NAME:-ethereum-secondary}
+      RPC_GNOSIS: ${RPC_GNOSIS:-}
+      RPC_POLYGON: ${RPC_POLYGON:-}
+      RPC_SEPOLIA: ${RPC_SEPOLIA:-}
       TELLOR_ALERT_DELIVERY_MODE: ${TELLOR_ALERT_DELIVERY_MODE:-log-only}
+      TELLOR_LAYER_URL: ${TELLOR_LAYER_URL:-}
     restart: unless-stopped
     read_only: true
     cap_drop:
@@ -76,6 +127,26 @@ services:
       - ./secrets:/run/tellor-secrets:ro
     networks:
       - monitors
+    healthcheck:
+      # Proves the poll loop is actually making progress, not just that
+      # the process is up. `tellor-alert-gate healthcheck` (see cli.py)
+      # reads StateStore.poll_liveness(), which is healthy only if a full
+      # M9-M11 scheduled evaluation and the M3 stale-DataBridge check both
+      # completed successfully against the configured Ethereum RPC
+      # providers within the last few minutes -- a real, RPC-touching unit
+      # of work performed once per wall-clock minute by AlertGate.run_once
+      # / process_scheduled. A deadlock (e.g. on the SQLite state file) or
+      # a poll loop wedged against a dead RPC stops advancing that signal
+      # even though the process keeps running, so this catches exactly
+      # that failure mode. It cannot catch: a live RPC returning wrong
+      # data, a delivery-only failure (Discord unreachable while RPC
+      # reads keep succeeding), or corruption in state not touched by
+      # this pass.
+      test: ["CMD", "python", "-m", "tellor_alert_gate", "healthcheck"]
+      interval: 60s
+      timeout: 15s
+      start_period: 300s
+      retries: 3
     logging:
       driver: json-file
       options:

@@ -35,6 +35,7 @@ def main(argv=None):
     subparsers.add_parser("check-config")
     subparsers.add_parser("check-inputs")
     subparsers.add_parser("check-live")
+    subparsers.add_parser("healthcheck")
     subparsers.add_parser("once")
     subparsers.add_parser("run")
     args = parser.parse_args(argv)
@@ -58,6 +59,30 @@ def main(argv=None):
         ).validate_routes()
         print(json.dumps({"status": "valid", **result}, sort_keys=True))
         return 0
+    if args.command == "healthcheck":
+        # Deliberately does not call Settings.from_env(require_runtime=True):
+        # a healthcheck must keep working (and keep telling the truth about
+        # the running process) even if it is invoked before every runtime
+        # secret is mounted, and it never touches the network -- it only
+        # reads the poll loop's own liveness metadata out of the local
+        # SQLite state file. See StateStore.poll_liveness for what this
+        # actually proves and cannot catch.
+        settings = Settings.from_env(require_runtime=False)
+        state = StateStore(settings.state_path)
+        try:
+            healthy, age_seconds = state.poll_liveness()
+        finally:
+            state.close()
+        print(
+            json.dumps(
+                {
+                    "status": "healthy" if healthy else "unhealthy",
+                    "last_scheduled_pass_age_seconds": age_seconds,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0 if healthy else 1
     if args.command in {"check-inputs", "check-live"}:
         settings = Settings.from_env(require_runtime=True)
         if args.command == "check-live" and settings.delivery_mode != "live":
