@@ -1,3 +1,5 @@
+The file below documents the older candidate implementation. It remains in the repository as migration evidence. It is not the final Tellor monitor runtime and it is not deployment guidance. For the final local M1-M11 alert-only design and validation-first deployment procedure, read `migration/production/README.md`.
+
 # Defender Autotasks → OpenZeppelin Monitor Migration
 
 This directory contains the locally implemented Tellor replacement for legacy

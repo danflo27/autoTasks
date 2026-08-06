@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from discord_routes import (
@@ -65,11 +66,11 @@ ADDRESS_REPORTS = {
 
 # TellorFlex SpotPrice trusted references. Each entry is:
 #   label (required) plus any of: cg, cmc, coinbase, defillama, paprika,
+#   hyperliquid,
 #   frankfurter, open_er_api, fxratesapi, fx, fixed.
 # Market-priced feeds require two usable sources before they are verified.
-# GYD is intentionally a one-reference peg: the three public market APIs below
-# do not currently publish a GYD price, so treating their absence as a market
-# price would hide a depeg rather than verify one.
+# GYD and OUSD are intentionally fixed-dollar references: treating an absent
+# market listing as a price would hide a depeg rather than verify one.
 MIN_TRUSTED_PRICE_SOURCES = 2
 
 TRUSTED_PRICE_ASSETS = {
@@ -80,6 +81,7 @@ TRUSTED_PRICE_ASSETS = {
         "coinbase": "BTC-USD",
         "defillama": "coingecko:bitcoin",
         "paprika": "btc-bitcoin",
+        "hyperliquid": "UBTC/USDC",
     },
     "0x83a7f3d48786ac2667503a61e8c415438ed2922eb86a2906e4ee66d9a2ce4992": {
         "label": "ETH / USD",
@@ -88,6 +90,7 @@ TRUSTED_PRICE_ASSETS = {
         "coinbase": "ETH-USD",
         "defillama": "coingecko:ethereum",
         "paprika": "eth-ethereum",
+        "hyperliquid": "UETH/USDC",
     },
     "0x5c13cd9c97dbb98f2429c101a2a8150e6c7a0ddaff6124ee176a3a411067ded0": {
         "label": "TRB / USD",
@@ -108,6 +111,11 @@ TRUSTED_PRICE_ASSETS = {
     },
     "0x68584962e7ca6a57d672cdbfaa37c55431a84c5bb8c40d5d204a23f304f83b2e": {
         "label": "GYD / USD",
+        "fixed": 1.0,
+        "min_sources": 1,
+    },
+    "0x50f84b680a867b18b936bb22eac2dffc07a235fc125a106179f37f31bb3d86e3": {
+        "label": "OUSD / USD",
         "fixed": 1.0,
         "min_sources": 1,
     },
@@ -776,6 +784,67 @@ def coinpaprika_price(coin_id):
     return float(data["quotes"]["USD"]["price"])
 
 
+def hyperliquid_spot_price(pair):
+    """Exact active Hyperliquid spot midpoint for a BASE/QUOTE token pair."""
+    base_name, separator, quote_name = str(pair).upper().partition("/")
+    if not separator or not base_name or not quote_name:
+        raise ValueError("Hyperliquid spot pair must be BASE/QUOTE")
+    data = http_json(
+        "https://api.hyperliquid.xyz/info",
+        body={"type": "spotMetaAndAssetCtxs"},
+    )
+    if not isinstance(data, list) or len(data) != 2:
+        raise ValueError("Hyperliquid returned malformed spot metadata")
+    metadata, contexts = data
+    tokens = metadata.get("tokens") if isinstance(metadata, dict) else None
+    universe = metadata.get("universe") if isinstance(metadata, dict) else None
+    if not isinstance(tokens, list) or not isinstance(universe, list):
+        raise ValueError("Hyperliquid returned malformed spot universe")
+    if not isinstance(contexts, list):
+        raise ValueError("Hyperliquid returned malformed spot contexts")
+
+    token_names = {}
+    for token in tokens:
+        if not isinstance(token, dict):
+            continue
+        try:
+            token_names[int(token["index"])] = str(token["name"]).upper()
+        except (KeyError, TypeError, ValueError):
+            continue
+    context_by_coin = {
+        str(context.get("coin")): context
+        for context in contexts
+        if isinstance(context, dict) and context.get("coin") is not None
+    }
+    matches = []
+    for market in universe:
+        if not isinstance(market, dict):
+            continue
+        market_tokens = market.get("tokens")
+        if not isinstance(market_tokens, list) or len(market_tokens) != 2:
+            continue
+        try:
+            market_pair = (
+                token_names[int(market_tokens[0])],
+                token_names[int(market_tokens[1])],
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if market_pair != (base_name, quote_name):
+            continue
+        context = context_by_coin.get(str(market.get("name")))
+        if context is not None:
+            matches.append(context)
+    if len(matches) != 1:
+        raise ValueError("Hyperliquid exact spot pair is unavailable or ambiguous")
+
+    midpoint = float(matches[0]["midPx"])
+    day_notional_volume = float(matches[0]["dayNtlVlm"])
+    if midpoint <= 0 or day_notional_volume <= 0:
+        raise ValueError("Hyperliquid spot pair has no active midpoint and volume")
+    return midpoint
+
+
 def coincap_price(cc_id):
     """Legacy CoinCap v2 helper. Host is gone; kept for tests / optional callers."""
     key = os.environ.get("COINCAP_API_KEY")
@@ -824,25 +893,39 @@ def fetch_trusted_prices(asset):
     if "fixed" in asset:
         return [float(asset["fixed"])]
 
-    prices = []
-    for key, fetcher in (
-        ("cg", coingecko_price),
-        ("cmc", coinmarketcap_price),
-        ("coinbase", coinbase_price),
-        ("defillama", defillama_price),
-        ("paprika", coinpaprika_price),
-        ("frankfurter", frankfurter_usd_rate),
-        ("open_er_api", open_er_api_usd_rate),
-        ("fxratesapi", fxratesapi_usd_rate),
-        ("fx", fx_usd_rate),
-    ):
-        source_id = asset.get(key)
-        if not source_id:
-            continue
+    configured = [
+        (fetcher, asset[key])
+        for key, fetcher in (
+            ("cg", coingecko_price),
+            ("cmc", coinmarketcap_price),
+            ("coinbase", coinbase_price),
+            ("defillama", defillama_price),
+            ("paprika", coinpaprika_price),
+            ("hyperliquid", hyperliquid_spot_price),
+            ("frankfurter", frankfurter_usd_rate),
+            ("open_er_api", open_er_api_usd_rate),
+            ("fxratesapi", fxratesapi_usd_rate),
+            ("fx", fx_usd_rate),
+        )
+        if asset.get(key)
+    ]
+    if not configured:
+        return []
+
+    def fetch(configured_source):
+        fetcher, source_id = configured_source
         try:
             price = fetcher(source_id)
+            if price is None or price <= 0:
+                return None
+            return float(price)
         except Exception:
-            continue
+            return None
+
+    with ThreadPoolExecutor(max_workers=len(configured)) as executor:
+        available = executor.map(fetch, configured)
+    prices = []
+    for price in available:
         if price is None or price <= 0:
             continue
         prices.append(float(price))

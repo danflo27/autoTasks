@@ -1,0 +1,13 @@
+{
+  "tellormaster-control": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "bridge-control": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "databridge-integrity": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "bridge-ledger-integrity": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "tellorflex-value-integrity": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "databank-value-integrity": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "governance-dispute": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "issuance-integrity": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "tellorflex-eth-usd-freshness": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "tellorflex-ampl-usd-deadline": "https://discord.com/api/webhooks/REPLACE/REPLACE",
+  "tellorflex-uspce-deadline": "https://discord.com/api/webhooks/REPLACE/REPLACE"
+}

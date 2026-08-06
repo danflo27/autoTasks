@@ -1,0 +1,24 @@
+{
+  "name": "databridge-integrity",
+  "paused": false,
+  "networks": ["ethereum_mainnet"],
+  "addresses": [
+    {
+      "address": "0xFfa3393BE1E4b442fff6cD0df0794B0031e9CF65",
+      "contract_spec": [
+        {"type":"event","name":"ValidatorSetUpdated","anonymous":false,"inputs":[{"name":"_powerThreshold","type":"uint256","indexed":false},{"name":"_validatorTimestamp","type":"uint256","indexed":false},{"name":"_validatorSetHash","type":"bytes32","indexed":false}]},
+        {"type":"event","name":"GuardianResetValidatorSet","anonymous":false,"inputs":[{"name":"_powerThreshold","type":"uint256","indexed":false},{"name":"_validatorTimestamp","type":"uint256","indexed":false},{"name":"_validatorSetHash","type":"bytes32","indexed":false}]}
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [],
+    "events": [
+      {"signature":"ValidatorSetUpdated(uint256,uint256,bytes32)","expression":null},
+      {"signature":"GuardianResetValidatorSet(uint256,uint256,bytes32)","expression":null}
+    ],
+    "transactions": [{"status":"Success","expression":null}]
+  },
+  "trigger_conditions": [],
+  "triggers": ["tellor_alert"]
+}

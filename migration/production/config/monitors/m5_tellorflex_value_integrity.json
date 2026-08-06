@@ -1,0 +1,20 @@
+{
+  "name": "tellorflex-value-integrity",
+  "paused": false,
+  "networks": ["ethereum_mainnet"],
+  "addresses": [
+    {
+      "address":"0x8cFc184c877154a8F9ffE0fe75649dbe5e2DBEbf",
+      "contract_spec":[
+        {"type":"event","name":"NewReport","anonymous":false,"inputs":[{"name":"_queryId","type":"bytes32","indexed":false},{"name":"_time","type":"uint256","indexed":false},{"name":"_value","type":"bytes","indexed":false},{"name":"_nonce","type":"uint256","indexed":false},{"name":"_queryData","type":"bytes","indexed":false},{"name":"_reporter","type":"address","indexed":false}]}
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [],
+    "events": [{"signature":"NewReport(bytes32,uint256,bytes,uint256,bytes,address)","expression":null}],
+    "transactions": [{"status":"Success","expression":null}]
+  },
+  "trigger_conditions": [],
+  "triggers": ["tellor_alert"]
+}

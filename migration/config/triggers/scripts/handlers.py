@@ -2,8 +2,10 @@
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from statistics import median
+from zoneinfo import ZoneInfo
 
 from tellor_lib import (
     ADDRESS_REPORTS, EVM_CALL_RPCS, EVMCallNotVerified,
@@ -44,6 +46,7 @@ DISPUTABLE_MONITOR = "TellorFlex Disputable Value"
 NEW_REPORT_SIGNATURE = "NewReport(bytes32,uint256,bytes,uint256,bytes,address)"
 AMPL_QUERY_ID = "0x0d12ad49193163bbbeff4e6db8294ced23ff8605359fd666799d4e25a3aa0e3a"
 USPCE_QUERY_ID = "0x612ec1d9cee860bb87deb6370ed0ae43345c9302c085c1dfc4c207cbec2970d7"
+EASTERN_TIME = ZoneInfo("America/New_York")
 
 
 class MalformedReport(ValueError):
@@ -197,13 +200,8 @@ def _decimal_text(value):
     return shown.rstrip("0").rstrip(".") if "." in shown else shown
 
 
-def _classify_spot(args, params, price_fetcher):
-    asset, currency = _decode_exact(["string", "string"], params, "SpotPrice query")
-    if not asset or not currency:
-        raise MalformedReport("SpotPrice asset or currency is empty")
-    feed = f"{asset} / {currency}".upper()
-    reported = _decimal_value(args["_value_bytes"], "SpotPrice")
-    price_asset = TRUSTED_PRICE_ASSETS.get(args["_queryId"])
+def _classify_trusted_price(query_id, feed, reported, price_fetcher):
+    price_asset = TRUSTED_PRICE_ASSETS.get(str(query_id).lower())
     if price_asset is None:
         return _outcome(
             OUTCOME_NOT_VERIFIED,
@@ -212,9 +210,6 @@ def _classify_spot(args, params, price_fetcher):
             ("Reason", "no trusted-source catalog entry for this query ID"),
         )
 
-    expected_pair = tuple(part.lower() for part in price_asset["label"].split(" / "))
-    if (asset, currency) != expected_pair:
-        raise MalformedReport("SpotPrice query parameters do not match the known query ID")
     try:
         available = price_fetcher(price_asset)
     except Exception:
@@ -256,6 +251,49 @@ def _classify_spot(args, params, price_fetcher):
         ("Trusted sources", len(usable)),
         ("Difference", f"{difference * 100:.6f}%"),
     )
+
+
+def _classify_spot(args, params, price_fetcher):
+    asset, currency = _decode_exact(["string", "string"], params, "SpotPrice query")
+    if not asset or not currency:
+        raise MalformedReport("SpotPrice asset or currency is empty")
+    feed = f"{asset} / {currency}".upper()
+    reported = _decimal_value(args["_value_bytes"], "SpotPrice")
+    price_asset = TRUSTED_PRICE_ASSETS.get(args["_queryId"])
+    if price_asset is not None:
+        expected_pair = tuple(
+            part.lower() for part in price_asset["label"].split(" / ")
+        )
+        if (asset, currency) != expected_pair:
+            raise MalformedReport(
+                "SpotPrice query parameters do not match the known query ID"
+            )
+    return _classify_trusted_price(
+        args["_queryId"], feed, reported, price_fetcher
+    )
+
+
+def classify_oracle_bank_update(query_id, value_hex, price_fetcher=None):
+    """Classify a bank update without claiming non-price values are verified."""
+    price_fetcher = price_fetcher or fetch_trusted_prices
+    key = str(query_id).lower()
+    price_asset = TRUSTED_PRICE_ASSETS.get(key)
+    feed = price_asset["label"] if price_asset else query_id_label(key)
+    if price_asset is None:
+        return _outcome(
+            OUTCOME_NOT_VERIFIED,
+            ("Feed", feed),
+            ("Reason", "no trusted-source catalog entry for this query ID"),
+        )
+    try:
+        reported = _decimal_value(hex_bytes(value_hex), "oracle bank SpotPrice")
+    except (AttributeError, TypeError, ValueError, MalformedReport):
+        return _outcome(
+            OUTCOME_NOT_VERIFIED,
+            ("Feed", feed),
+            ("Reason", "oracle bank SpotPrice value is malformed"),
+        )
+    return _classify_trusted_price(key, feed, reported, price_fetcher)
 
 
 def _classify_evm_call(args, params, evm_reference, environ):
@@ -437,31 +475,85 @@ def _proof_details(args):
     return validators, signatures, total_power, signature_count(signatures)
 
 
-def handle_update_oracle_data(m):
+def _eastern_clock(timestamp_ms):
+    try:
+        raw = int(timestamp_ms)
+        if raw == 0:
+            return "none"
+        timestamp = datetime.fromtimestamp(raw / 1000, EASTERN_TIME)
+    except (OverflowError, OSError, TypeError, ValueError):
+        return "invalid timestamp"
+    return timestamp.strftime("%H:%M:%S %Z")
+
+
+def _compact_elapsed(milliseconds):
+    seconds = max(0, (int(milliseconds) + 500) // 1000)
+    days, seconds = divmod(seconds, 86_400)
+    hours, seconds = divmod(seconds, 3_600)
+    minutes, seconds = divmod(seconds, 60)
+    if days:
+        return f"{days}d{hours}h"
+    if hours:
+        return f"{hours}h{minutes}m"
+    if minutes:
+        return f"{minutes}m{seconds}s" if seconds else f"{minutes}m"
+    return f"{seconds}s"
+
+
+def handle_update_oracle_data(m, price_fetcher=None):
     args = m.arg_map()
     attest_data = parse_structured_arg(args["_attestData"])
     if len(attest_data) != 3 or len(attest_data[1]) != 6:
         raise ValueError("monitor returned malformed oracle attestation data")
-    query_id, report, attestation_timestamp = attest_data
+    query_id, report, _attestation_timestamp = attest_data
     value_hex, report_timestamp, aggregate_power, previous_timestamp, next_timestamp, last_consensus = report
-    validators, signatures, validator_power, present_signatures = _proof_details(args)
+    _validators, signatures, validator_power, present_signatures = _proof_details(args)
     mode = "Consensus" if int(report_timestamp) == int(last_consensus) else "Optimistic"
-    _notify(
-        m,
-        "Oracle data updated",
-        _field("Feed", query_id_label(query_id)),
-        _field("Value", oracle_value(query_id, value_hex)),
-        _field("Query ID", query_id),
-        _field("Report mode", mode),
-        _field("Report time", unix_utc(report_timestamp, milliseconds=True)),
-        _field("Previous report", unix_utc(previous_timestamp, milliseconds=True)),
-        _field("Next report", unix_utc(next_timestamp, milliseconds=True)),
-        _field("Last consensus", unix_utc(last_consensus, milliseconds=True)),
-        _field("Attested", unix_utc(attestation_timestamp, milliseconds=True)),
-        _field("Aggregate power", f"{int(aggregate_power):,}"),
-        f"Validators: `{len(validators)}` (total power `{validator_power:,}`)",
-        _field("Signatures", f"{present_signatures} of {len(signatures)}"),
+    outcome = classify_oracle_bank_update(
+        query_id, value_hex, price_fetcher=price_fetcher
     )
+    if outcome.label == OUTCOME_NORMAL:
+        return
+    power_percent = (
+        f"{int(aggregate_power) / validator_power * 100:.2f}".rstrip("0").rstrip(".")
+        if validator_power
+        else "0"
+    )
+    report_ms = int(report_timestamp)
+    previous_ms = int(previous_timestamp)
+    feed_label = query_id_label(query_id)
+    prior_context = (
+        f"`{_compact_elapsed(report_ms - previous_ms)}` after prior"
+        if previous_ms
+        else "no prior report"
+    )
+    lines = [
+        f"**Data bank updated for {feed_label}: "
+        f"{oracle_value(query_id, value_hex)}**",
+        f"> {'✅' if mode == 'Consensus' else '⚠️'} {mode} · "
+        f"{m.network.replace('_', ' ').capitalize()}",
+        f"> Reported `{_eastern_clock(report_ms)}` · {prior_context}",
+        f"> Proof: `{present_signatures}/{len(signatures)}` signatures · "
+        f"`{power_percent}%` power",
+        f"> {outcome.label} · oracle value verification",
+    ]
+    lines.extend(
+        f"> {_field(label, value)}"
+        for label, value in outcome.details
+        if label not in {"Feed", "Reported"}
+    )
+    if mode == "Optimistic":
+        lines.append(f"> Last consensus `{_eastern_clock(last_consensus)}`")
+    if int(next_timestamp):
+        lines.append(f"> Next report `{_eastern_clock(next_timestamp)}`")
+    if feed_label == "Unknown query":
+        lines.append(f"> {_field('Query ID', query_id)}")
+    observed_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    lines.append(
+        f"> [View transaction]({m.tx_link}) · "
+        f"observed `+{_compact_elapsed(observed_ms - report_ms)}`"
+    )
+    send_alert(m, "\n".join(lines))
 
 
 def handle_update_validator_set(m):

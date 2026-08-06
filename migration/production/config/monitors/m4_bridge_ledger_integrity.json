@@ -1,0 +1,46 @@
+{
+  "name": "bridge-ledger-integrity",
+  "paused": false,
+  "networks": ["ethereum_mainnet"],
+  "addresses": [
+    {
+      "address":"0x5589e306b1920F009979a50B88caE32aecD471E4",
+      "contract_spec":[
+        {"type":"event","name":"Deposit","anonymous":false,"inputs":[{"name":"_depositId","type":"uint256","indexed":false},{"name":"_sender","type":"address","indexed":false},{"name":"_recipient","type":"string","indexed":false},{"name":"_amount","type":"uint256","indexed":false},{"name":"_tip","type":"uint256","indexed":false}]},
+        {"type":"event","name":"Withdraw","anonymous":false,"inputs":[{"name":"_depositId","type":"uint256","indexed":false},{"name":"_sender","type":"string","indexed":false},{"name":"_recipient","type":"address","indexed":false},{"name":"_amount","type":"uint256","indexed":false}]},
+        {"type":"event","name":"ExtraWithdrawClaimed","anonymous":false,"inputs":[{"name":"_recipient","type":"address","indexed":false},{"name":"_amount","type":"uint256","indexed":false}]}
+      ]
+    },
+    {
+      "address":"0x6ec401744008f4B018Ed9A36f76e6629799Ee50E",
+      "contract_spec":[
+        {"type":"event","name":"Deposit","anonymous":false,"inputs":[{"name":"_depositId","type":"uint256","indexed":false},{"name":"_sender","type":"address","indexed":false},{"name":"_recipient","type":"string","indexed":false},{"name":"_amount","type":"uint256","indexed":false},{"name":"_tip","type":"uint256","indexed":false}]},
+        {"type":"event","name":"Withdraw","anonymous":false,"inputs":[{"name":"_depositId","type":"uint256","indexed":false},{"name":"_sender","type":"string","indexed":false},{"name":"_recipient","type":"address","indexed":false},{"name":"_amount","type":"uint256","indexed":false}]},
+        {"type":"event","name":"ExtraWithdrawClaimed","anonymous":false,"inputs":[{"name":"_withdrawId","type":"uint256","indexed":false},{"name":"_recipient","type":"address","indexed":false},{"name":"_amount","type":"uint256","indexed":false}]},
+        {"type":"event","name":"TokensToClaimUpdated","anonymous":false,"inputs":[{"name":"_recipient","type":"address","indexed":false},{"name":"_amount","type":"uint256","indexed":false}]},
+        {"type":"event","name":"ExtraWithdrawReverified","anonymous":false,"inputs":[{"name":"_withdrawId","type":"uint256","indexed":false},{"name":"_recipient","type":"address","indexed":false},{"name":"_amount","type":"uint256","indexed":false}]}
+      ]
+    },
+    {
+      "address":"0x88dF592F8eb5D7Bd38bFeF7dEb0fBc02cf3778a0",
+      "contract_spec":[
+        {"type":"event","name":"Transfer","anonymous":false,"inputs":[{"name":"_from","type":"address","indexed":true},{"name":"_to","type":"address","indexed":true},{"name":"_value","type":"uint256","indexed":false}]}
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [],
+    "events": [
+      {"signature":"Deposit(uint256,address,string,uint256,uint256)","expression":null},
+      {"signature":"Withdraw(uint256,string,address,uint256)","expression":null},
+      {"signature":"ExtraWithdrawClaimed(address,uint256)","expression":null},
+      {"signature":"ExtraWithdrawClaimed(uint256,address,uint256)","expression":null},
+      {"signature":"TokensToClaimUpdated(address,uint256)","expression":null},
+      {"signature":"ExtraWithdrawReverified(uint256,address,uint256)","expression":null},
+      {"signature":"Transfer(address,address,uint256)","expression":"_from == 0x5589e306b1920f009979a50b88cae32aecd471e4 OR _from == 0x6ec401744008f4b018ed9a36f76e6629799ee50e OR _to == 0x5589e306b1920f009979a50b88cae32aecd471e4 OR _to == 0x6ec401744008f4b018ed9a36f76e6629799ee50e"}
+    ],
+    "transactions": [{"status":"Success","expression":null}]
+  },
+  "trigger_conditions": [],
+  "triggers": ["tellor_alert"]
+}

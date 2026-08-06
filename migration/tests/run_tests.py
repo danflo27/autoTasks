@@ -178,14 +178,38 @@ def check(name, case_payload, expect_alert, contains=(), excludes=(), env=None):
         lines = content.splitlines()
         if not lines or not re.fullmatch(r"\*\*[^*\n]+\*\*", lines[0]):
             problems.append(f"alert title is not normalized: {content!r}")
-        if len(lines) < 4 or lines[1] != "> Network: `ethereum_mainnet`":
-            problems.append(f"alert network line is not normalized: {content!r}")
-        if len(lines) < 2 or not re.fullmatch(r"> Observed: `[^`]+ UTC`", lines[-2]):
-            problems.append(f"alert timestamp is not normalized: {content!r}")
-        if len(lines) < 1 or lines[-1] != (
-            "> [View transaction](https://etherscan.io/tx/" + alert["tx"] + ")"
-        ):
-            problems.append(f"alert transaction link is not normalized: {content!r}")
+        oracle_update = lines[0].startswith("**Data bank updated for ")
+        if oracle_update:
+            if len(lines) < 5 or not re.fullmatch(
+                r"> (?:✅ Consensus|⚠️ Optimistic) · Ethereum mainnet", lines[1]
+            ):
+                problems.append(f"oracle status line is not normalized: {content!r}")
+            if len(lines) < 3 or not re.fullmatch(
+                r"> Reported `[^`]+ E[DS]T` · (?:`[^`]+` after prior|no prior report)",
+                lines[2],
+            ):
+                problems.append(f"oracle report time is not normalized: {content!r}")
+            if len(lines) < 4 or not re.fullmatch(
+                r"> Proof: `\d+/\d+` signatures · `\d+(?:\.\d+)?%` power",
+                lines[3],
+            ):
+                problems.append(f"oracle proof line is not normalized: {content!r}")
+            transaction_prefix = (
+                "> [View transaction](https://etherscan.io/tx/"
+                + alert["tx"]
+                + ") · observed `+"
+            )
+            if not lines[-1].startswith(transaction_prefix) or not lines[-1].endswith("`"):
+                problems.append(f"oracle transaction line is not normalized: {content!r}")
+        else:
+            if len(lines) < 4 or lines[1] != "> Network: `ethereum_mainnet`":
+                problems.append(f"alert network line is not normalized: {content!r}")
+            if len(lines) < 2 or not re.fullmatch(r"> Observed: `[^`]+ UTC`", lines[-2]):
+                problems.append(f"alert timestamp is not normalized: {content!r}")
+            if len(lines) < 1 or lines[-1] != (
+                "> [View transaction](https://etherscan.io/tx/" + alert["tx"] + ")"
+            ):
+                problems.append(f"alert transaction link is not normalized: {content!r}")
         if any(not line.startswith("> ") for line in lines[1:]):
             problems.append(f"alert detail line is not normalized: {content!r}")
         if lines[0] in {
@@ -225,6 +249,7 @@ ORACLE_ADDRESS_ID = "0xcf0c5863be1cf3b948a9ff43290f931399765d051a60c3b23a4e09814
 BTC_ID = "0xa6f013ee236804827b77696d350e9f0ac3e879328f2a3021d473a0b778ad78ac"
 ETH_ID = "0x83a7f3d48786ac2667503a61e8c415438ed2922eb86a2906e4ee66d9a2ce4992"
 GYD_ID = "0x68584962e7ca6a57d672cdbfaa37c55431a84c5bb8c40d5d204a23f304f83b2e"
+OUSD_ID = "0x50f84b680a867b18b936bb22eac2dffc07a235fc125a106179f37f31bb3d86e3"
 CNY_ID = "0x2c81613b335c890096fd1c9a89766a2d71da2c9636505a9cb3b3dc7877cdad4b"
 UNKNOWN_ID = "0x" + "11" * 32
 ADDR = "0x5589e306b1920f009979a50b88cae32aecd471e4"
@@ -321,17 +346,24 @@ def main():
     # Tellor Layer relayer / validator-set monitors. Monitor formats nested
     # tuples as Python-literal-like strings; these fixtures mirror that output.
     report_ms = 1_700_000_000_000
-    previous_ms = report_ms - 60_000
+    oracle_report_ms = 1_784_822_775_905
+    oracle_previous_ms = 1_784_822_728_448
     # Match OpenZeppelin Monitor's format_token_value output exactly: quoted
     # strings inside tuples/arrays, with no whitespace between items.
-    def oracle_attestation(query_id, value):
+    def oracle_attestation(
+        query_id,
+        value,
+        next_report=0,
+        last_consensus=oracle_report_ms,
+    ):
         return (
-            f'(\"{query_id}\",(\"{value}\",{report_ms},48453,'
-            f'{previous_ms},0,{report_ms}),{report_ms})'
+            f'(\"{query_id}\",(\"{value}\",{oracle_report_ms},48861,'
+            f'{oracle_previous_ms},{next_report},{last_consensus}),'
+            f'{oracle_report_ms})'
         )
 
-    attest_data = oracle_attestation(ETH_ID, uint_value_hex(3500.5))
-    validators = f'[(\"{ADDR}\",60),(\"{OTHER_ADDR}\",40)]'
+    attest_data = oracle_attestation(OUSD_ID, uint_value_hex(1.25))
+    validators = f'[(\"{ADDR}\",24500),(\"{OTHER_ADDR}\",24447)]'
     signatures = (
         f'[(27,\"0x{"11" * 32}\",\"0x{"22" * 32}\"),'
         f'(0,\"{ZERO_WORD}\",\"{ZERO_WORD}\")]'
@@ -344,9 +376,25 @@ def main():
                ("_currentValidatorSet", validators, "tuple[]"),
                ("_sigs", signatures, "tuple[]")],
           ),
-          True, ["Oracle data updated", "ETH / USD", "$3,500.50", "Consensus",
-                 "2023-11-14 22:13:20 UTC", "Validators: `2`", "Signatures: `1 of 2`"],
-          excludes=[uint_value_hex(3500.5), "0x" + "11" * 32])
+          True, ["**Data bank updated for OUSD / USD: $1.25**",
+                 "✅ Consensus · Ethereum mainnet",
+                 "Reported `12:06:15 EDT` · `47s` after prior",
+                 "Proof: `1/2` signatures · `99.82%` power",
+                 "🚨 POTENTIAL DISPUTE · oracle value verification",
+                 "observed `+"],
+          excludes=[uint_value_hex(1.25), "0x" + "11" * 32,
+                    "Query ID:", "Attested:", "Aggregate power:"])
+
+    check("updateOracleData suppresses healthy OUSD",
+          payload(
+              "Update Oracle Data Calls",
+              "updateOracleData((bytes32,(bytes,uint256,uint256,uint256,uint256,uint256),uint256),(address,uint256)[],(uint8,bytes32,bytes32)[])",
+              [("_attestData", oracle_attestation(
+                   OUSD_ID, uint_value_hex(1.0)), "tuple"),
+               ("_currentValidatorSet", validators, "tuple[]"),
+               ("_sigs", signatures, "tuple[]")],
+          ),
+          False)
 
     check("updateOracleData decodes relayed Autopay addresses",
           payload(
@@ -370,6 +418,24 @@ def main():
           ),
           True, ["Tellor oracle address", OTHER_ADDR],
           excludes=[oracle_address_value, "0x" + "11" * 32])
+
+    check("updateOracleData expands exceptional context",
+          payload(
+              "Update Oracle Data Calls",
+              "updateOracleData((bytes32,(bytes,uint256,uint256,uint256,uint256,uint256),uint256),(address,uint256)[],(uint8,bytes32,bytes32)[])",
+              [("_attestData", oracle_attestation(
+                   UNKNOWN_ID,
+                   "0x1234",
+                   next_report=oracle_report_ms + 60_000,
+                   last_consensus=oracle_previous_ms,
+               ), "tuple"),
+               ("_currentValidatorSet", validators, "tuple[]"),
+               ("_sigs", signatures, "tuple[]")],
+          ),
+          True, ["⚠️ Optimistic · Ethereum mainnet",
+                 "Last consensus `12:05:28 EDT`",
+                 "Next report `12:07:15 EDT`",
+                 f"Query ID: `{UNKNOWN_ID}`"])
 
     validator_hash = "0x" + "33" * 32
     check("updateValidatorSet summarized",

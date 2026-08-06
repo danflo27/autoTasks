@@ -21,6 +21,7 @@ import tellor_lib  # noqa: E402
 
 
 BTC_ID = "0xa6f013ee236804827b77696d350e9f0ac3e879328f2a3021d473a0b778ad78ac"
+OUSD_ID = "0x50f84b680a867b18b936bb22eac2dffc07a235fc125a106179f37f31bb3d86e3"
 UNKNOWN_ID = "0x" + "11" * 32
 REPORTER = "0x50a86759d495ecfa7c301071d6b0bdd4bd664ab0"
 TARGET = "0x5589e306b1920f009979a50b88cae32aecd471e4"
@@ -158,7 +159,7 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("Tellor EVMCall Validation", handlers.HANDLERS)
 
     def test_catalogs_have_exact_target_sets(self):
-        self.assertEqual(len(tellor_lib.TRUSTED_PRICE_ASSETS), 17)
+        self.assertEqual(len(tellor_lib.TRUSTED_PRICE_ASSETS), 18)
         self.assertEqual(
             set(tellor_lib.EVM_CALL_RPCS),
             {1, 10, 100, 137, 10200, 11155111},
@@ -167,6 +168,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("BRL / USD", labels)
         self.assertIn("CNY / USD", labels)
         self.assertIn("GYD / USD", labels)
+        self.assertIn("OUSD / USD", labels)
         for asset in tellor_lib.TRUSTED_PRICE_ASSETS.values():
             if "fixed" in asset:
                 continue
@@ -184,6 +186,20 @@ class ConfigTests(unittest.TestCase):
             if asset["label"] == "GYD / USD"
         )
         self.assertEqual(gyd["min_sources"], 1)
+        ousd = tellor_lib.TRUSTED_PRICE_ASSETS[OUSD_ID]
+        self.assertEqual(ousd["fixed"], 1.0)
+        self.assertEqual(ousd["min_sources"], 1)
+        self.assertEqual(
+            {
+                asset["label"]: asset["hyperliquid"]
+                for asset in tellor_lib.TRUSTED_PRICE_ASSETS.values()
+                if "hyperliquid" in asset
+            },
+            {
+                "BTC / USD": "UBTC/USDC",
+                "ETH / USD": "UETH/USDC",
+            },
+        )
         self.assertEqual(tellor_lib.TELLIOT_EVM_CALL_TAG, "v0.4.20")
         self.assertEqual(
             tellor_lib.TELLIOT_EVM_CALL_COMMIT,
@@ -234,6 +250,53 @@ class SpotAndOutcomeTests(unittest.TestCase):
         )
 
 
+class OracleBankTests(unittest.TestCase):
+    def classify_ousd(self, raw_integer):
+        return handlers.classify_oracle_bank_update(
+            OUSD_ID, uint_value(raw_integer)
+        )
+
+    def test_ousd_fixed_dollar_boundaries_are_strict(self):
+        for raw_integer in (8 * 10**17, 10**18, 12 * 10**17):
+            with self.subTest(raw_integer=raw_integer):
+                self.assertEqual(
+                    self.classify_ousd(raw_integer).label,
+                    handlers.OUTCOME_NORMAL,
+                )
+        for raw_integer in (8 * 10**17 - 1, 12 * 10**17 + 1):
+            with self.subTest(raw_integer=raw_integer):
+                self.assertEqual(
+                    self.classify_ousd(raw_integer).label,
+                    handlers.OUTCOME_DISPUTE,
+                )
+
+    def test_market_median_suppresses_good_and_flags_bad_bank_updates(self):
+        good = handlers.classify_oracle_bank_update(
+            BTC_ID,
+            uint_value(100 * 10**18),
+            price_fetcher=lambda _: [Decimal("99"), Decimal("100"), Decimal("101")],
+        )
+        bad = handlers.classify_oracle_bank_update(
+            BTC_ID,
+            uint_value(121 * 10**18),
+            price_fetcher=lambda _: [Decimal("100"), Decimal("100")],
+        )
+        missing = handlers.classify_oracle_bank_update(
+            BTC_ID,
+            uint_value(100 * 10**18),
+            price_fetcher=lambda _: [Decimal("100")],
+        )
+        self.assertEqual(good.label, handlers.OUTCOME_NORMAL)
+        self.assertEqual(bad.label, handlers.OUTCOME_DISPUTE)
+        self.assertEqual(missing.label, handlers.OUTCOME_NOT_VERIFIED)
+
+    def test_unknown_or_malformed_bank_update_is_not_verified(self):
+        unknown = handlers.classify_oracle_bank_update(UNKNOWN_ID, "0x1234")
+        malformed = handlers.classify_oracle_bank_update(OUSD_ID, "0x1234")
+        self.assertEqual(unknown.label, handlers.OUTCOME_NOT_VERIFIED)
+        self.assertEqual(malformed.label, handlers.OUTCOME_NOT_VERIFIED)
+
+
 class TrustedPriceSourceTests(unittest.TestCase):
     def test_new_source_response_shapes_are_decoded(self):
         def payload(url, **_kwargs):
@@ -245,6 +308,31 @@ class TrustedPriceSourceTests(unittest.TestCase):
                 return {"rates": {"USD": "0.21"}}
             if "fxratesapi" in url:
                 return {"rates": {"USD": "0.22"}}
+            if "hyperliquid" in url:
+                return [
+                    {
+                        "tokens": [
+                            {"index": 0, "name": "USDC"},
+                            {"index": 150, "name": "UBTC"},
+                        ],
+                        "universe": [
+                            {
+                                "tokens": [150, 0],
+                                "name": "@142",
+                                "index": 142,
+                                "isCanonical": False,
+                            }
+                        ],
+                    },
+                    [
+                        {
+                            "coin": "@142",
+                            "midPx": "100.25",
+                            "markPx": "100.20",
+                            "dayNtlVlm": "250000",
+                        }
+                    ],
+                ]
             self.fail(url)
 
         with mock.patch.object(tellor_lib, "http_json", side_effect=payload):
@@ -252,17 +340,47 @@ class TrustedPriceSourceTests(unittest.TestCase):
             self.assertEqual(tellor_lib.frankfurter_usd_rate("BRL"), 0.2)
             self.assertEqual(tellor_lib.open_er_api_usd_rate("BRL"), 0.21)
             self.assertEqual(tellor_lib.fxratesapi_usd_rate("BRL"), 0.22)
+            self.assertEqual(
+                tellor_lib.hyperliquid_spot_price("UBTC/USDC"), 100.25
+            )
+
+    def test_hyperliquid_rejects_mark_fallback_and_inactive_pair(self):
+        response = [
+            {
+                "tokens": [
+                    {"index": 0, "name": "USDC"},
+                    {"index": 150, "name": "UBTC"},
+                ],
+                "universe": [{"tokens": [150, 0], "name": "@142"}],
+            },
+            [
+                {
+                    "coin": "@142",
+                    "midPx": None,
+                    "markPx": "100.20",
+                    "dayNtlVlm": "0",
+                }
+            ],
+        ]
+        with mock.patch.object(tellor_lib, "http_json", return_value=response):
+            with self.assertRaises((TypeError, ValueError)):
+                tellor_lib.hyperliquid_spot_price("UBTC/USDC")
 
     def test_collector_uses_new_public_fallbacks_and_skips_one_failure(self):
         asset = {
             "cg": "bitcoin",
             "paprika": "btc-bitcoin",
             "frankfurter": "BRL",
+            "hyperliquid": "UBTC/USDC",
         }
         with mock.patch.object(tellor_lib, "coingecko_price", return_value=100), mock.patch.object(
             tellor_lib, "coinpaprika_price", side_effect=RuntimeError("unavailable")
-        ), mock.patch.object(tellor_lib, "frankfurter_usd_rate", return_value=0.2):
-            self.assertEqual(tellor_lib.fetch_trusted_prices(asset), [100.0, 0.2])
+        ), mock.patch.object(tellor_lib, "frankfurter_usd_rate", return_value=0.2), mock.patch.object(
+            tellor_lib, "hyperliquid_spot_price", return_value=101
+        ):
+            self.assertEqual(
+                tellor_lib.fetch_trusted_prices(asset), [100.0, 101.0, 0.2]
+            )
 
     def test_handler_emits_each_label_once_and_never_calls_http(self):
         cases = [

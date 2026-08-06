@@ -677,6 +677,12 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("OnCalendar=*-*-* *:*:00 UTC", timer)
         self.assertNotIn("User=tellor-monitoring", watchdog_service)
         self.assertIn("docker.service", watchdog_service)
+        self.assertIn(
+            "CapabilityBoundingSet=CAP_DAC_READ_SEARCH", watchdog_service
+        )
+        self.assertIn(
+            "AmbientCapabilities=CAP_DAC_READ_SEARCH", watchdog_service
+        )
         self.assertIn('if [[ "${1:-}" != "--enable" ]]', installer)
         self.assertIn("check-discord-routes", installer)
 
