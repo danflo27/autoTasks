@@ -15,7 +15,7 @@ case "$action" in
 esac
 
 if [ ! -f "$environment_file" ]; then
-  echo "missing $environment_file; copy production/environment.example first" >&2
+  echo "missing $environment_file; copy environment.example first" >&2
   exit 1
 fi
 
@@ -34,6 +34,11 @@ read_env_setting() {
     return 1
   fi
   setting_value=$(awk -F= -v key="$setting_name" '$1 == key { print substr($0, index($0, "=") + 1) }' "$environment_file")
+  # Strip CR (CRLF line endings) and surrounding whitespace so this matches
+  # the Python config loader's `.strip()` semantics exactly. Without this, a
+  # value like "live\r" would fail an exact-match comparison here while the
+  # service still reads it as "live", defeating the safety gates below.
+  setting_value=$(printf '%s' "$setting_value" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
   if [ -n "$setting_value" ]; then
     printf '%s\n' "$setting_value"
   else
@@ -99,7 +104,8 @@ do
   fi
 done
 
-if ! grep -Eq '^LAYER_REPLAY_START_HEIGHT=1$' "$environment_file"; then
+layer_replay_start_height=$(read_env_setting LAYER_REPLAY_START_HEIGHT "")
+if [ "$layer_replay_start_height" != "1" ]; then
   seed_file="$script_dir/secrets/layer_minter_seed.json"
   if [ ! -f "$seed_file" ]; then
     echo "missing required verified minter seed: $seed_file" >&2
@@ -112,8 +118,9 @@ if ! grep -Eq '^LAYER_REPLAY_START_HEIGHT=1$' "$environment_file"; then
   fi
 fi
 
+tellor_alert_delivery_mode=$(read_env_setting TELLOR_ALERT_DELIVERY_MODE "")
 if [ "$action" = "--up-live" ]; then
-  if ! grep -Eq '^TELLOR_ALERT_DELIVERY_MODE=live$' "$environment_file"; then
+  if [ "$tellor_alert_delivery_mode" != "live" ]; then
     echo "--up-live requires TELLOR_ALERT_DELIVERY_MODE=live" >&2
     exit 1
   fi
@@ -128,7 +135,7 @@ if [ "$action" = "--up-live" ]; then
       exit 1
     fi
   done
-elif grep -Eq '^TELLOR_ALERT_DELIVERY_MODE=live$' "$environment_file"; then
+elif [ "$tellor_alert_delivery_mode" = "live" ]; then
   echo "--up-log-only refuses an environment configured for live delivery" >&2
   exit 1
 fi

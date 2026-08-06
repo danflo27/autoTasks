@@ -2,12 +2,10 @@
 .env.*
 .env~
 !.env.example
-migration/data/
-migration/logs/
-migration/runtime/
-migration/secrets/
+runtime/
+secrets/
 # Local-only EC2 and agent-operations materials; never include in deployment archives.
-migration/.local/
+.local/
 node_modules/
 .DS_Store
 __pycache__/
@@ -20,10 +18,10 @@ archive/
 **/.env.*
 **/*.env
 **/*.env.*
-/migration/evidence/
-/migration/worklog/
-/migration/credentials/
-/migration/private/
+/evidence/
+/worklog/
+/credentials/
+/private/
 /.skill-work/
 /.codex/
 /.pi/

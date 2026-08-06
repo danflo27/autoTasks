@@ -562,6 +562,25 @@ class StateStore:
                 ),
             )
 
+    def reclaim_stale_sending(self, delivery_key, older_than_seconds):
+        """Reclaim a `sending` reservation abandoned by a dead process.
+
+        Atomically re-stamps `reserved_at` to now, but only if the row is
+        still `status='sending'` and its existing `reserved_at` is older
+        than `older_than_seconds`. Returns True if this call reclaimed the
+        row (the caller should now retry delivery), False if the row is
+        missing, no longer `sending`, or not yet stale (a genuinely
+        in-flight delivery must be left untouched).
+        """
+        cutoff = utc_text(utc_now() - timedelta(seconds=older_than_seconds))
+        cursor = self.connection.execute(
+            "UPDATE deliveries SET reserved_at=? "
+            "WHERE delivery_key=? AND status='sending' AND reserved_at<?",
+            (utc_text(), delivery_key, cutoff),
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
     def delivery_failed(self, delivery_key, error, ambiguous=False):
         if ambiguous:
             self.connection.execute(

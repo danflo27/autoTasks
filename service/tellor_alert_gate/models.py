@@ -14,7 +14,16 @@ def utc_now():
 
 def utc_text(value=None):
     moment = value or utc_now()
-    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    # Always emit microseconds. isoformat() drops them when they happen to be
+    # exactly zero, which makes the text sort wrong: "...:00Z" would compare
+    # greater than "...:00.000001Z" because "." < "Z". state.py compares and
+    # orders these timestamps as text (reserved_at, next_attempt_at,
+    # inserted_at, opened_at), so a fixed width keeps that ordering sound.
+    return (
+        moment.astimezone(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 class Unresolved(RuntimeError):

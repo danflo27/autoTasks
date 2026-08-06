@@ -9,12 +9,12 @@ This source map is implementation and review evidence. It does not authorize dep
 | Component | Pinned version | Use |
 |---|---|---|
 | OpenZeppelin Monitor | `v1.5.0`, image digest `sha256:8541bcfa869577aa6e44ea85f52700f5bb66c17a75b01f2eb2be66603d172635` | Loads the eight M1-M8 EVM sensors and appends raw `MonitorMatch` records to the durable spool |
-| Alert gate image | Built from `alert_gate/Dockerfile` | Validates final Ethereum receipts and state, replays Tellor Layer blocks, evaluates M1-M11, schedules the M9-M11 absence checks, groups incidents in SQLite, and performs final delivery |
+| Alert gate image | Built from `service/Dockerfile` | Validates final Ethereum receipts and state, replays Tellor Layer blocks, evaluates M1-M11, schedules the M9-M11 absence checks, groups incidents in SQLite, and performs final delivery |
 | Alert gate Python base | `python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49` | Runs the alert gate |
 
 The OpenZeppelin Monitor image pin is in [`docker-compose.production.yaml`](docker-compose.production.yaml).
 
-The alert gate image builds from [`alert_gate/Dockerfile`](alert_gate/Dockerfile). The Dockerfile pins `python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49`.
+The alert gate image builds from [`service/Dockerfile`](service/Dockerfile). The Dockerfile pins `python:3.12.11-slim-bookworm@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49`.
 
 If an operator changes a tag or digest, run the full local test suite. Validate the Monitor image configuration. Complete a log-only replay. Then perform staged runtime readback before deployment.
 
@@ -45,16 +45,16 @@ The production check intentionally rejects the Telliot zero-result fallback. A t
 
 The following files define the local M1-M11 production policy:
 
-- [`production/policy/monitors.json`](production/policy/monitors.json) defines the exact eleven monitor IDs, route slugs, severities, and kinds.
-- [`production/policy/approved_changes.json`](production/policy/approved_changes.json) contains the reviewed M1/M2 control-change approvals.
-- [`production/policy/enrolled_databridges.json`](production/policy/enrolled_databridges.json) contains the pinned M3 DataBridge enrollment.
-- [`production/policy/bridge_ledger_seed.example.json`](production/policy/bridge_ledger_seed.example.json) defines the M4 bridge-ledger checkpoint schema.
-- [`production/policy/layer_minter_seed.example.json`](production/policy/layer_minter_seed.example.json) defines the Layer minter checkpoint schema.
-- [`production/policy/discord_routes.example.json`](production/policy/discord_routes.example.json) defines the exact eleven live-delivery route names.
+- [`policy/monitors.json`](policy/monitors.json) defines the exact eleven monitor IDs, route slugs, severities, and kinds.
+- [`policy/approved_changes.json`](policy/approved_changes.json) contains the reviewed M1/M2 control-change approvals.
+- [`policy/enrolled_databridges.json`](policy/enrolled_databridges.json) contains the pinned M3 DataBridge enrollment.
+- [`policy/bridge_ledger_seed.example.json`](policy/bridge_ledger_seed.example.json) defines the M4 bridge-ledger checkpoint schema.
+- [`policy/layer_minter_seed.example.json`](policy/layer_minter_seed.example.json) defines the Layer minter checkpoint schema.
+- [`policy/discord_routes.example.json`](policy/discord_routes.example.json) defines the exact eleven live-delivery route names.
 
 These files contain operator policy. The upstream projects do not make these operator-policy claims.
 
-Use `production/policy/monitors.json` as the local source of truth for the exact M1-M11 catalog.
+Use `policy/monitors.json` as the local source of truth for the exact M1-M11 catalog.
 
 ## Review and update rule
 
@@ -95,7 +95,7 @@ These properties require separate authorization and current deployment or runtim
 
 ## Major provenance
 
-- **Source map:** `production/policy/monitors.json`, the other production policy files, `alert_gate/`, `docker-compose.production.yaml`, and `deploy-production.sh` define the active implementation and its operating checks.
+- **Source map:** `policy/monitors.json`, the other policy files, `service/`, `docker-compose.production.yaml`, and `deploy-production.sh` define the active implementation and its operating checks.
 - **Changed claims:** The old Defender and candidate documentation is not part of this active source map.
 - **Assumptions:** The map describes the intended local production design. It does not assume a current EC2 deployment or working Discord delivery.
 - **Validation:** The active evidence consists of local tests, Compose configuration validation, and deployment-script validation.

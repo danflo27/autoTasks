@@ -1,3 +1,4 @@
+from datetime import timedelta
 import json
 from pathlib import Path
 import sys
@@ -8,8 +9,8 @@ from eth_abi import encode
 from eth_utils import keccak
 
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "migration" / "alert_gate"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "service"))
 
 from tellor_alert_gate.constants import (  # noqa: E402
     TELLOR_FLEX,
@@ -22,7 +23,11 @@ from tellor_alert_gate.bridge_seed import (  # noqa: E402
     EthereumDepositBackfiller,
     read_bridge_ledger_seed,
 )
-from tellor_alert_gate.delivery import DeliveryClient, publish  # noqa: E402
+from tellor_alert_gate.delivery import (  # noqa: E402
+    STALE_SENDING_RESERVATION_SECONDS,
+    DeliveryClient,
+    publish,
+)
 from tellor_alert_gate.ethereum import (  # noqa: E402
     call_data,
     decode_receipt_events,
@@ -47,7 +52,10 @@ from tellor_alert_gate.models import (  # noqa: E402
     DecodedEvent,
     Finding,
     Unresolved,
+    utc_now,
+    utc_text,
 )
+from tellor_alert_gate.service import AlertGate  # noqa: E402
 from tellor_alert_gate.state import StateStore  # noqa: E402
 from tellor_alert_gate.values import evaluate_new_report  # noqa: E402
 
@@ -513,6 +521,106 @@ class AlertGateCoreTests(unittest.TestCase):
             self.assertEqual(len(log.read_text().splitlines()), 1)
             store.close()
 
+    def test_fresh_sending_reservation_is_not_retried(self):
+        # A `sending` row that was reserved moments ago could still be a
+        # live in-flight HTTP call. publish() must not attempt a second
+        # POST for it -- that would risk a duplicate Discord message for an
+        # alert that is genuinely still being delivered.
+        class CountingSession:
+            def __init__(self):
+                self.calls = 0
+
+            def post(self, *_args, **_kwargs):
+                self.calls += 1
+                return type("Response", (), {"status_code": 200})()
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.sqlite3")
+            log = Path(directory) / "alerts.jsonl"
+            session = CountingSession()
+            client = DeliveryClient("live", None, log, session=session)
+            client.validate_routes = lambda: {
+                "issuance-integrity": "https://discord.com/api/webhooks/1/token"
+            }
+            finding = Finding(
+                slug="issuance-integrity",
+                predicate="test predicate",
+                expected=1,
+                observed=2,
+                incident_key="issuance:test",
+                delivery_key="1:test:M8",
+                chain_point=ChainPoint("ethereum", 10, BLOCK_HASH, 1000),
+                signal="test",
+            )
+
+            self.assertTrue(store.reserve_delivery(finding))
+            self.assertEqual(store.delivery(finding.delivery_key)["status"], "sending")
+
+            self.assertFalse(publish(store, client, finding))
+
+            self.assertEqual(session.calls, 0)
+            self.assertEqual(store.delivery(finding.delivery_key)["status"], "sending")
+            self.assertEqual(store.incident(finding.incident_key)["status"], "open")
+            store.close()
+
+    def test_stale_sending_reservation_is_retried_and_recovers(self):
+        # A `sending` row left behind by a process that died between
+        # reserve_delivery() and the HTTP call completing must eventually be
+        # retried -- otherwise a P0 alert is lost forever with no recovery
+        # path. Once the reservation is older than
+        # STALE_SENDING_RESERVATION_SECONDS (far longer than any live
+        # attempt can legitimately take), publish() must treat it as
+        # crashed and actually deliver it.
+        class CountingSession:
+            def __init__(self):
+                self.calls = 0
+
+            def post(self, *_args, **_kwargs):
+                self.calls += 1
+                return type("Response", (), {"status_code": 200})()
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.sqlite3")
+            log = Path(directory) / "alerts.jsonl"
+            session = CountingSession()
+            client = DeliveryClient("live", None, log, session=session)
+            client.validate_routes = lambda: {
+                "issuance-integrity": "https://discord.com/api/webhooks/1/token"
+            }
+            finding = Finding(
+                slug="issuance-integrity",
+                predicate="test predicate",
+                expected=1,
+                observed=2,
+                incident_key="issuance:test",
+                delivery_key="1:test:M8",
+                chain_point=ChainPoint("ethereum", 10, BLOCK_HASH, 1000),
+                signal="test",
+            )
+
+            self.assertTrue(store.reserve_delivery(finding))
+            # Simulate a process that reserved the delivery and then died
+            # before ever contacting Discord: back-date the reservation
+            # well past the staleness threshold.
+            stale_timestamp = utc_text(
+                utc_now() - timedelta(seconds=STALE_SENDING_RESERVATION_SECONDS + 60)
+            )
+            store.connection.execute(
+                "UPDATE deliveries SET reserved_at=? WHERE delivery_key=?",
+                (stale_timestamp, finding.delivery_key),
+            )
+            store.connection.commit()
+
+            self.assertTrue(publish(store, client, finding))
+
+            self.assertEqual(session.calls, 1)
+            delivery = store.delivery(finding.delivery_key)
+            self.assertEqual(delivery["status"], "sent")
+            self.assertIsNotNone(delivery["delivered_at"])
+            self.assertEqual(store.incident(finding.incident_key)["status"], "open")
+            self.assertEqual(len(log.read_text().splitlines()), 1)
+            store.close()
+
     def test_valid_internal_mint_to_oracle_is_silent_and_closes_failure(self):
         timestamp = 1_000
         prior = 900
@@ -713,6 +821,104 @@ class AlertGateCoreTests(unittest.TestCase):
         )
         event.args["_queryData"] = "0x01"
         self.assertEqual(evaluate_new_report(event, point, {}).severity, "P1")
+
+
+class _FakeStore:
+    """Minimal stand-in for StateStore's run_once() surface."""
+
+    def __init__(self, calls):
+        self.calls = calls
+        self.meta = {}
+
+    def ingest_spool(self, spool_path):
+        self.calls.append("ingest_spool")
+
+    def set_meta(self, key, value):
+        self.calls.append("set_meta:{}".format(key))
+        self.meta[key] = value
+
+
+class _FakeGate:
+    """A bare object exposing exactly the attributes AlertGate.run_once()
+    touches, so run_once() can be exercised without constructing a real
+    AlertGate (which requires live RPC endpoints, seed files, etc.)."""
+
+    def __init__(self, *, matches_raise=False, scheduled_raises=False):
+        self.calls = []
+        self.store = _FakeStore(self.calls)
+        self.settings = type("Settings", (), {"spool_path": "unused"})()
+        self._matches_raise = matches_raise
+        self._scheduled_raises = scheduled_raises
+
+        gate = self
+
+        class _DepositBackfiller:
+            def ingest_available(self):
+                gate.calls.append("deposit_backfill")
+
+        class _LayerIngestor:
+            def ingest_available(self, limit=100):
+                gate.calls.append("layer_ingest")
+
+        self.deposit_backfiller = _DepositBackfiller()
+        self.layer_ingestor = _LayerIngestor()
+
+    def process_matches(self):
+        self.calls.append("process_matches")
+        if self._matches_raise:
+            raise RuntimeError("simulated unrelated RPC failure in process_matches")
+
+    def process_layer_blocks(self, limit=100):
+        self.calls.append("process_layer_blocks")
+
+    def process_scheduled(self):
+        self.calls.append("process_scheduled")
+        if self._scheduled_raises:
+            raise RuntimeError("simulated failure in process_scheduled")
+
+    def process_stale_databridges(self):
+        self.calls.append("process_stale_databridges")
+
+
+class RunOnceStageIsolationTests(unittest.TestCase):
+    """Regression coverage for BUG 3: a raising early stage in run_once()
+    must not prevent process_scheduled() (M9-M11) or
+    process_stale_databridges() (M3) from running -- those are exactly the
+    absence-detection checks that a silently-skipped scheduled pass would
+    defeat."""
+
+    def test_early_stage_failure_still_lets_scheduled_stages_run(self):
+        gate = _FakeGate(matches_raise=True)
+
+        with self.assertLogs("tellor_alert_gate", level="ERROR") as logs:
+            AlertGate.run_once(gate, run_scheduled=True)
+
+        self.assertIn("process_matches", gate.calls)
+        self.assertIn("layer_ingest", gate.calls)
+        self.assertIn("process_layer_blocks", gate.calls)
+        self.assertIn("process_scheduled", gate.calls)
+        self.assertIn("process_stale_databridges", gate.calls)
+        self.assertIn("set_meta:last_scheduled_minute", gate.calls)
+        self.assertTrue(
+            any("process_matches" in message for message in logs.output),
+            msg="expected the failing stage name in the log output: {}".format(
+                logs.output
+            ),
+        )
+
+    def test_failed_scheduled_stage_does_not_mark_pass_complete(self):
+        # If process_scheduled() itself fails, last_scheduled_minute must
+        # NOT be recorded -- otherwise the M9-M11/M3 checks would be
+        # skipped until the next scheduling interval instead of being
+        # retried on the very next poll.
+        gate = _FakeGate(scheduled_raises=True)
+
+        with self.assertLogs("tellor_alert_gate", level="ERROR"):
+            AlertGate.run_once(gate, run_scheduled=True)
+
+        self.assertIn("process_scheduled", gate.calls)
+        self.assertIn("process_stale_databridges", gate.calls)
+        self.assertNotIn("set_meta:last_scheduled_minute", gate.calls)
 
 
 if __name__ == "__main__":

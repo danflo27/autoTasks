@@ -17,6 +17,21 @@ DISCORD_URL = re.compile(
 )
 
 
+# How long a `sending` delivery reservation may be held before we treat it as
+# abandoned by a dead process rather than a live in-flight attempt.
+#
+# A single deliver() call makes at most 3 HTTP POST attempts (retrying only
+# on HTTP 429), each with a `requests` timeout of (connect=5s, read=15s), so
+# a worst-case in-flight attempt that is still legitimately running takes at
+# most roughly 3 * (5 + 15) = 60 seconds between `reserve_delivery()` and the
+# HTTP call resolving. STALE_SENDING_RESERVATION_SECONDS is set to 10x that
+# bound (600s / 10 minutes) so a live attempt is never mistaken for a
+# crashed one, while a genuinely abandoned P0 alert is still recovered
+# automatically well within an operator's incident-response window instead
+# of being lost forever.
+STALE_SENDING_RESERVATION_SECONDS = 600
+
+
 class DeliveryError(RuntimeError):
     def __init__(self, message, ambiguous=False):
         super().__init__(message)
@@ -116,12 +131,26 @@ class DeliveryClient:
 def publish(store, client, finding):
     existing = store.delivery(finding.delivery_key)
     if existing is not None:
+        if existing["status"] == "sending" and store.reclaim_stale_sending(
+            finding.delivery_key, STALE_SENDING_RESERVATION_SECONDS
+        ):
+            # `sending` (unlike `uncertain`) means the HTTP call never got a
+            # chance to complete or fail -- the process almost certainly
+            # died between reserve_delivery() and contacting Discord, so
+            # Discord was very likely never reached. reclaim_stale_sending
+            # only returns True when this reservation has sat in `sending`
+            # far longer than any live attempt could take (see
+            # STALE_SENDING_RESERVATION_SECONDS), so this is a crash-recovery
+            # retry, not a duplicate-risking retry of a real in-flight call.
+            return _attempt_delivery(store, client, finding)
         if (
             existing["status"] in {"sending", "uncertain"}
             and store.incident(finding.incident_key) is None
         ):
-            # A process or network boundary made the remote result ambiguous.
-            # Preserve deduplication instead of risking a duplicate opening.
+            # A process or network boundary made the remote result ambiguous
+            # (or the `sending` reservation is still within its live
+            # in-flight window). Preserve deduplication instead of risking a
+            # duplicate opening.
             store.open_incident(finding)
         return False
     if store.incident(finding.incident_key) is not None:
@@ -134,6 +163,10 @@ def publish(store, client, finding):
         return False
     if not store.reserve_delivery(finding):
         return False
+    return _attempt_delivery(store, client, finding)
+
+
+def _attempt_delivery(store, client, finding):
     try:
         client.deliver(finding)
     except DeliveryError as error:

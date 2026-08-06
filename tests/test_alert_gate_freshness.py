@@ -7,8 +7,8 @@ import unittest
 from eth_abi import encode
 
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "migration" / "alert_gate"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "service"))
 
 from tellor_alert_gate.freshness import (  # noqa: E402
     evaluate_ampl_day,

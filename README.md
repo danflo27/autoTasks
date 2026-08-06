@@ -1,54 +1,43 @@
 # AutoTasks
 
-This repository contains the final local Tellor M1-M11 alert-only implementation.
+This repository contains the final local Tellor M1-M11 alert-only implementation: an OpenZeppelin Monitor deployment paired with a Python alert gate that turns raw chain events into reviewed, deduplicated Discord alerts.
 
-Use only these active sources: `migration/production/` for policy and configuration, `migration/alert_gate/` for the durable gate, `migration/docker-compose.production.yaml` for the stack, `migration/deploy-production.sh` for procedures, and `migration/MONITORING_SOURCE_MAP.md` for source and version evidence.
+Active sources: `config/` and `policy/` for configuration and operator policy, `service/` for the durable gate, `docker-compose.production.yaml` for the stack, `deploy-production.sh` for deployment procedures, and `MONITORING_SOURCE_MAP.md` for source and version evidence.
 
 ## Runtime design
 
-OpenZeppelin Monitor v1.5.0 loads eight EVM sensors for M1-M8. The Monitor only appends raw `MonitorMatch` records to a durable spool.
+The production runtime has two containers. OpenZeppelin Monitor v1.5.0 loads eight EVM sensors for M1-M8 and only appends raw `MonitorMatch` records to a durable spool; it does not evaluate or deliver anything itself. The alert gate consumes that spool and does the real work: it validates final Ethereum receipts and state, replays Tellor Layer blocks, evaluates all eleven monitors (M1-M11), runs the M9-M11 absence checks on a schedule, groups incidents in SQLite, and performs final delivery. M9-M11 have no Monitor JSON because events cannot prove an absence.
 
-The alert gate does the following work:
+The default delivery mode is `log-only`. The runtime sends no heartbeat, startup, success, recovery, RPC, parser, or service-health messages — a fault sends one opening message, and an ambiguous live-delivery result keeps the delivery reservation rather than retrying it.
 
-- It validates final Ethereum receipts and state.
-- It replays Tellor Layer blocks.
-- It evaluates M1-M11.
-- It schedules the M9-M11 absence checks.
-- It groups incidents in SQLite.
-- It performs final delivery.
+This repository does not prove deployment, current host state, or Discord delivery, and it does not authorize activation. For host preparation, seeds, Discord routes, and the deployment flow, see [`docs/operations.md`](docs/operations.md). For per-monitor response procedures, see [`docs/runbook.md`](docs/runbook.md).
 
-M9-M11 do not have Monitor JSON files. Events cannot prove an absence.
+## Repository layout
 
-The default delivery mode is `log-only`. The runtime does not send heartbeat, startup, success, recovery, RPC, parser, or service-health messages.
-
-A fault can send one opening message. If a live delivery result is ambiguous, the alert gate keeps the delivery reservation. It does not retry.
-
-This repository does not prove deployment, current host state, or Discord delivery. It does not authorize activation.
+| Path | Contents |
+|---|---|
+| `config/monitors/` | Eight OpenZeppelin Monitor v1.5.0 EVM prefilters for M1-M8 |
+| `config/networks/`, `config/triggers/` | Monitor network definition and the `tellor_alert` trigger script that appends matches to the spool |
+| `policy/` | Operator policy: the M1-M11 catalog, approved changes, DataBridge enrollment, bridge/minter seed schemas, Discord route names |
+| `service/tellor_alert_gate/` | The alert gate: receipt/state validation, Layer replay, correlation, scheduling, incidents, and delivery |
+| `docker-compose.production.yaml` | The production stack definition |
+| `deploy-production.sh` | The validation-first deployment entry point |
+| `docs/operations.md` | Operator procedures: host prep, seeds, Discord routes, deployment |
+| `docs/runbook.md` | Per-monitor response runbook (M1-M11) |
+| `docs/monitor-inventory.csv` | Monitor inventory: targets, functions/events, descriptions |
+| `MONITORING_SOURCE_MAP.md` | Pinned versions and source/provenance evidence |
+| `legacy/` | Retired Defender/Sentinel autotasks this system replaced (see [`legacy/README.md`](legacy/README.md)) |
 
 ## Safe local checks
 
-Run these commands from `migration/`:
+Run these commands from the repository root:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=alert_gate python3 -m unittest discover -s tests -p 'test_alert_gate_*.py'
-TELLOR_ENV_FILE=production/environment.example docker compose --env-file production/environment.example -f docker-compose.production.yaml config --quiet
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=service python3 -m unittest discover -s tests -p 'test_alert_gate_*.py'
+TELLOR_ENV_FILE=environment.example docker compose --env-file environment.example -f docker-compose.production.yaml config --quiet
 sh -n deploy-production.sh
 ```
 
-These checks do not start the long-running services.
+These checks do not start the long-running services and do not require chain access.
 
-For additional checks, run:
-
-```sh
-./deploy-production.sh --check
-```
-
-`--check` requires an existing `.env.production` file with mode 0600. The command does the following work:
-
-1. It creates the required runtime and secret directories.
-2. It validates directory ownership and the Compose configuration.
-3. It builds `alert-gate`.
-4. It checks the `alert-gate` configuration.
-5. It checks the Monitor configuration.
-
-The command does not start the long-running services. However, it is not read-only.
+For a deeper (still non-running) validation pass, use `./deploy-production.sh --check` — see [`docs/operations.md`](docs/operations.md#configuration-check) for what it does and what it requires.

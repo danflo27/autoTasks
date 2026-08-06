@@ -61,6 +61,32 @@ from .values import evaluate_new_report
 LOGGER = logging.getLogger("tellor_alert_gate")
 
 
+def _run_stage(name, fn, *args, **kwargs):
+    """Run one run_once() stage in isolation.
+
+    A stage failure here (an unrelated RPC hiccup, a transient network
+    error, anything) must not prevent later stages -- in particular the
+    M9-M11 absence checks in process_scheduled() and the M3 check in
+    process_stale_databridges() -- from running. Those checks exist
+    specifically to detect "nothing happened when something should have",
+    so silently skipping them because an earlier, unrelated stage raised
+    would make "no alert" indistinguishable from "everything is fine",
+    which is exactly the failure mode they exist to catch.
+
+    Returns True if the stage completed without raising, False if it
+    failed (in which case the failure has already been logged with the
+    stage name for identification).
+    """
+    try:
+        fn(*args, **kwargs)
+        return True
+    except Exception:
+        LOGGER.exception(
+            "alert-gate stage %r failed; continuing with remaining stages", name
+        )
+        return False
+
+
 class AlertGate:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -137,15 +163,28 @@ class AlertGate:
             self.stop_event.wait(self.settings.poll_interval_seconds)
 
     def run_once(self, *, run_scheduled=True):
-        self.store.ingest_spool(self.settings.spool_path)
-        self.deposit_backfiller.ingest_available()
-        self.process_matches()
-        self.layer_ingestor.ingest_available(limit=100)
-        self.process_layer_blocks(limit=100)
+        # Each stage is isolated: a failure here is logged and swallowed so
+        # it cannot prevent later stages -- especially the scheduled
+        # absence checks below -- from running this cycle. See _run_stage.
+        _run_stage("ingest_spool", self.store.ingest_spool, self.settings.spool_path)
+        _run_stage("deposit_backfill", self.deposit_backfiller.ingest_available)
+        _run_stage("process_matches", self.process_matches)
+        _run_stage("layer_ingest", self.layer_ingestor.ingest_available, limit=100)
+        _run_stage("process_layer_blocks", self.process_layer_blocks, limit=100)
         if run_scheduled:
-            self.process_scheduled()
-            self.process_stale_databridges()
-            self.store.set_meta("last_scheduled_minute", int(time.time()) // 60)
+            scheduled_ok = _run_stage("process_scheduled", self.process_scheduled)
+            stale_ok = _run_stage(
+                "process_stale_databridges", self.process_stale_databridges
+            )
+            # Only record the scheduled pass as complete if both scheduled
+            # stages actually ran successfully. If either failed,
+            # last_scheduled_minute stays unset/stale, so _scheduled_due()
+            # keeps requesting a scheduled pass on every subsequent poll
+            # (rather than waiting a full interval) until the M9-M11 and M3
+            # checks actually get to run. process_scheduled() is idempotent
+            # per period, so re-running it after a stale_ok failure is safe.
+            if scheduled_ok and stale_ok:
+                self.store.set_meta("last_scheduled_minute", int(time.time()) // 60)
 
     def process_matches(self, limit=25):
         for row in self.store.pending_matches(limit=limit):

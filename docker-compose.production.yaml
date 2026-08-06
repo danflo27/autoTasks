@@ -24,7 +24,7 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     volumes:
-      - ./production/config:/app/config:ro
+      - ./config:/app/config:ro
       - ./runtime/monitor-data:/app/data
       - ./runtime/spool:/app/spool
     networks:
@@ -37,7 +37,7 @@ services:
 
   alert-gate:
     build:
-      context: ./alert_gate
+      context: ./service
       dockerfile: Dockerfile
     image: tellor-alert-gate:2026-08-06
     platform: linux/amd64
@@ -69,8 +69,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=128m
     volumes:
-      - ./production/config:/etc/tellor-alert-gate/monitor-config:ro
-      - ./production/policy:/etc/tellor-alert-gate/policy:ro
+      - ./config:/etc/tellor-alert-gate/monitor-config:ro
+      - ./policy:/etc/tellor-alert-gate/policy:ro
       - ./runtime/alert-gate:/var/lib/tellor-alert-gate
       - ./runtime/spool:/var/spool/tellor-alert-gate
       - ./secrets:/run/tellor-secrets:ro

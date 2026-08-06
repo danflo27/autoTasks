@@ -7,8 +7,8 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2]
-ALERT_GATE = ROOT / "migration" / "alert_gate"
+ROOT = Path(__file__).resolve().parents[1]
+ALERT_GATE = ROOT / "service"
 sys.path.insert(0, str(ALERT_GATE))
 
 from tellor_alert_gate.config import ConfigurationError, Settings  # noqa: E402
@@ -21,7 +21,7 @@ from tellor_alert_gate.policy import (  # noqa: E402
 
 class AlertGateConfigurationTests(unittest.TestCase):
     def setUp(self):
-        self.production = ROOT / "migration" / "production"
+        self.production = ROOT
 
     def test_catalog_and_eight_sensor_files_are_exact(self):
         result = validate_monitor_policy(
@@ -133,7 +133,7 @@ class AlertGateConfigurationTests(unittest.TestCase):
             Settings.from_env(environment, require_runtime=True)
 
     def test_active_tree_excludes_superseded_monitor_stacks(self):
-        superseded = (
+        legacy_directories = (
             "EVMCall",
             "addressUpdates",
             "bridges",
@@ -144,24 +144,20 @@ class AlertGateConfigurationTests(unittest.TestCase):
             "staking",
             "tips",
             "tokenBridge",
-            "migration/.env.example",
-            "migration/AWS_DOCKER_OPERATIONS.md",
-            "migration/DEPLOYMENT_MANIFEST.schema.json",
-            "migration/MIGRATION.md",
-            "migration/TELLOR_MONITORING_PROGRESS.md",
-            "migration/TELLOR_OPS_EC2_HANDOFF.md",
-            "migration/WORKLOAD_CONTRACT.md",
-            "migration/config",
-            "migration/docker-compose.yaml",
-            "migration/oci",
-            "migration/ops",
-            "migration/quickstart.py",
-            "migration/report_freshness.py",
         )
-        for relative_path in superseded:
+        for name in legacy_directories:
             self.assertFalse(
-                (ROOT / relative_path).exists(),
-                f"superseded artifact remains active: {relative_path}",
+                (ROOT / name).exists(),
+                f"retired legacy autotask directory must not exist at repo root: {name}",
+            )
+        self.assertFalse(
+            (ROOT / "migration").exists(),
+            "migration/ was fully absorbed into the restructured repo root and must not exist",
+        )
+        for name in legacy_directories:
+            self.assertTrue(
+                (ROOT / "legacy" / name).exists(),
+                f"legacy archive is missing retired autotask directory: legacy/{name}",
             )
 
 
