@@ -1,0 +1,29 @@
+{
+  "name": "governance-dispute",
+  "paused": false,
+  "networks": ["ethereum_mainnet"],
+  "addresses": [
+    {
+      "address":"0xB30b1B98d8276b80bC4f5aF9f9170ef3220EC27D",
+      "contract_spec":[
+        {"type":"event","name":"NewDispute","anonymous":false,"inputs":[{"name":"_disputeId","type":"uint256","indexed":false},{"name":"_queryId","type":"bytes32","indexed":false},{"name":"_timestamp","type":"uint256","indexed":false},{"name":"_reporter","type":"address","indexed":false}]}
+      ]
+    },
+    {
+      "address":"0x8cFc184c877154a8F9ffE0fe75649dbe5e2DBEbf",
+      "contract_spec":[
+        {"type":"event","name":"ValueRemoved","anonymous":false,"inputs":[{"name":"_queryId","type":"bytes32","indexed":false},{"name":"_timestamp","type":"uint256","indexed":false}]}
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [],
+    "events": [
+      {"signature":"NewDispute(uint256,bytes32,uint256,address)","expression":null},
+      {"signature":"ValueRemoved(bytes32,uint256)","expression":null}
+    ],
+    "transactions": [{"status":"Success","expression":null}]
+  },
+  "trigger_conditions": [],
+  "triggers": ["tellor_alert"]
+}

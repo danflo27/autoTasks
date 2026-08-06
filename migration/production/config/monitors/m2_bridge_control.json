@@ -1,0 +1,40 @@
+{
+  "name": "bridge-control",
+  "paused": false,
+  "networks": ["ethereum_mainnet"],
+  "addresses": [
+    {
+      "address": "0x5589e306b1920F009979a50B88caE32aecD471E4",
+      "contract_spec": [
+        {"type":"event","name":"BridgeStateUpdated","anonymous":false,"inputs":[{"name":"_newState","type":"uint8","internalType":"enum TokenBridge.BridgeState","indexed":false}]}
+      ]
+    },
+    {
+      "address": "0x6ec401744008f4B018Ed9A36f76e6629799Ee50E",
+      "contract_spec": [
+        {"type":"event","name":"BridgeStateUpdated","anonymous":false,"inputs":[{"name":"_newState","type":"uint8","internalType":"enum TokenBridgeV2.BridgeState","indexed":false}]},
+        {"type":"event","name":"PauseProposed","anonymous":false,"inputs":[{"name":"_proposalId","type":"uint256","indexed":false},{"name":"_proposer","type":"address","indexed":false},{"name":"_proposalTime","type":"uint256","indexed":false}]},
+        {"type":"event","name":"PauseApproved","anonymous":false,"inputs":[{"name":"_proposalId","type":"uint256","indexed":false},{"name":"_proposer","type":"address","indexed":false},{"name":"_proposalTime","type":"uint256","indexed":false}]},
+        {"type":"event","name":"DataBridgeUpdated","anonymous":false,"inputs":[{"name":"_dataBridge","type":"address","indexed":false}]},
+        {"type":"event","name":"RoleUpdateProposed","anonymous":false,"inputs":[{"name":"_role","type":"bytes32","indexed":false},{"name":"_newAddress","type":"address","indexed":false},{"name":"_newUpdateDelay","type":"uint256","indexed":false}]},
+        {"type":"event","name":"RoleUpdateAccepted","anonymous":false,"inputs":[{"name":"_role","type":"bytes32","indexed":false},{"name":"_newAddress","type":"address","indexed":false}]},
+        {"type":"event","name":"MintToOracleFailed","anonymous":false,"inputs":[]}
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [],
+    "events": [
+      {"signature":"BridgeStateUpdated(uint8)","expression":null},
+      {"signature":"PauseProposed(uint256,address,uint256)","expression":null},
+      {"signature":"PauseApproved(uint256,address,uint256)","expression":null},
+      {"signature":"DataBridgeUpdated(address)","expression":null},
+      {"signature":"RoleUpdateProposed(bytes32,address,uint256)","expression":null},
+      {"signature":"RoleUpdateAccepted(bytes32,address)","expression":null},
+      {"signature":"MintToOracleFailed()","expression":null}
+    ],
+    "transactions": [{"status":"Success","expression":null}]
+  },
+  "trigger_conditions": [],
+  "triggers": ["tellor_alert"]
+}

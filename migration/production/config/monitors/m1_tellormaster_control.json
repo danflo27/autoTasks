@@ -1,0 +1,33 @@
+{
+  "name": "tellormaster-control",
+  "paused": false,
+  "networks": ["ethereum_mainnet"],
+  "addresses": [
+    {
+      "address": "0x88dF592F8eb5D7Bd38bFeF7dEb0fBc02cf3778a0",
+      "contract_spec": [
+        {"type":"function","name":"changeTellorContract","stateMutability":"nonpayable","inputs":[{"name":"_tContract","type":"address"}],"outputs":[]},
+        {"type":"function","name":"changeDeity","stateMutability":"nonpayable","inputs":[{"name":"_newDeity","type":"address"}],"outputs":[]},
+        {"type":"function","name":"changeOwner","stateMutability":"nonpayable","inputs":[{"name":"_newOwner","type":"address"}],"outputs":[]},
+        {"type":"event","name":"NewTellorAddress","anonymous":false,"inputs":[{"name":"_newTellor","type":"address","indexed":false}]},
+        {"type":"event","name":"NewProposedOracleAddress","anonymous":false,"inputs":[{"name":"_newProposedOracle","type":"address","indexed":false},{"name":"_timestamp","type":"uint256","indexed":false}]},
+        {"type":"event","name":"NewOracleAddress","anonymous":false,"inputs":[{"name":"_newOracle","type":"address","indexed":false},{"name":"_timestamp","type":"uint256","indexed":false}]}
+      ]
+    }
+  ],
+  "match_conditions": {
+    "functions": [
+      {"signature":"changeTellorContract(address)","expression":null},
+      {"signature":"changeDeity(address)","expression":null},
+      {"signature":"changeOwner(address)","expression":null}
+    ],
+    "events": [
+      {"signature":"NewTellorAddress(address)","expression":null},
+      {"signature":"NewProposedOracleAddress(address,uint256)","expression":null},
+      {"signature":"NewOracleAddress(address,uint256)","expression":null}
+    ],
+    "transactions": [{"status":"Success","expression":null}]
+  },
+  "trigger_conditions": [],
+  "triggers": ["tellor_alert"]
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "ethereum_chain_id": 1,
+  "layer_chain_id": "tellor-1",
+  "source": "REPLACE_WITH_REVIEWED_M4_CHECKPOINT_PROVENANCE",
+  "verified_at": "REPLACE_WITH_UTC_TIMESTAMP_Z",
+  "ethereum_checkpoint": {
+    "block_number": "REPLACE_WITH_FINALIZED_ETHEREUM_BLOCK",
+    "block_hash": "REPLACE_WITH_0X_PREFIXED_64_HEX_BLOCK_HASH"
+  },
+  "layer_checkpoint": {
+    "height": "REPLACE_WITH_COMMITTED_LAYER_HEIGHT",
+    "block_hash": "REPLACE_WITH_64_HEX_LAYER_BLOCK_HASH",
+    "block_time_ms": "REPLACE_WITH_UNIX_MILLISECONDS"
+  },
+  "pending_ethereum_deposits": [],
+  "pending_layer_events": []
+}

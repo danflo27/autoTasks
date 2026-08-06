@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "contracts": [
+    {
+      "address": "0xFfa3393BE1E4b442fff6cD0df0794B0031e9CF65",
+      "runtime_bytecode_keccak256": "0xc11c63aa0d0347be3cccd9974b7b4bb849ffb914baa340ee89f9296b87b941eb",
+      "source_revision": "5236a16b92bb158a7fc8c56cfed9382d1a9ee3c5",
+      "abi_revision": "pre-constructor-domain",
+      "validator_set_hash_domain_separator": "0x636865636b706f696e7400000000000000000000000000000000000000000000",
+      "domain_rule": "compile-time-constant",
+      "stale_rule": "block_timestamp-validator_timestamp_ms/1000>unbonding_period"
+    }
+  ]
+}

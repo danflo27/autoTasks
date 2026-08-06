@@ -1,0 +1,87 @@
+name: tellor-production-monitors
+
+services:
+  monitor:
+    image: openzeppelin/openzeppelin-monitor:v1.5.0@sha256:8541bcfa869577aa6e44ea85f52700f5bb66c17a75b01f2eb2be66603d172635
+    platform: linux/amd64
+    user: "${TELLOR_RUNTIME_UID:-1000}:${TELLOR_RUNTIME_GID:-1000}"
+    environment:
+      ALERT_GATE_SPOOL_PATH: /app/spool/monitor-matches.jsonl
+      IN_DOCKER: "true"
+      LOG_LEVEL: info
+      LOG_MODE: stdout
+      METRICS_ENABLED: "false"
+      RPC_ETHEREUM_MAINNET: ${RPC_ETHEREUM_MAINNET:-}
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: "0.80"
+    mem_limit: 2g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    volumes:
+      - ./production/config:/app/config:ro
+      - ./runtime/monitor-data:/app/data
+      - ./runtime/spool:/app/spool
+    networks:
+      - monitors
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  alert-gate:
+    build:
+      context: ./alert_gate
+      dockerfile: Dockerfile
+    image: tellor-alert-gate:2026-08-06
+    platform: linux/amd64
+    user: "${TELLOR_RUNTIME_UID:-1000}:${TELLOR_RUNTIME_GID:-1000}"
+    env_file:
+      - ${TELLOR_ENV_FILE:-.env.production}
+    environment:
+      ALERT_GATE_ALERTS_LOG: /var/lib/tellor-alert-gate/alerts.jsonl
+      ALERT_GATE_SPOOL_PATH: /var/spool/tellor-alert-gate/monitor-matches.jsonl
+      ALERT_GATE_STATE_PATH: /var/lib/tellor-alert-gate/state.sqlite3
+      APPROVED_CHANGES_FILE: /etc/tellor-alert-gate/policy/approved_changes.json
+      BRIDGE_LEDGER_SEED_FILE: /run/tellor-secrets/bridge_ledger_seed.json
+      DISCORD_WEBHOOKS_FILE: /run/tellor-secrets/discord_webhooks.json
+      ENROLLED_DATABRIDGES_FILE: /etc/tellor-alert-gate/policy/enrolled_databridges.json
+      LAYER_MINTER_SEED_FILE: /run/tellor-secrets/layer_minter_seed.json
+      MONITOR_CONFIG_DIR: /etc/tellor-alert-gate/monitor-config/monitors
+      MONITOR_MANIFEST_FILE: /etc/tellor-alert-gate/policy/monitors.json
+      RELEASE_MANIFESTS_DIR: /run/tellor-secrets/release-manifests
+      TELLOR_ALERT_DELIVERY_MODE: ${TELLOR_ALERT_DELIVERY_MODE:-log-only}
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: "0.90"
+    mem_limit: 2g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
+    volumes:
+      - ./production/config:/etc/tellor-alert-gate/monitor-config:ro
+      - ./production/policy:/etc/tellor-alert-gate/policy:ro
+      - ./runtime/alert-gate:/var/lib/tellor-alert-gate
+      - ./runtime/spool:/var/spool/tellor-alert-gate
+      - ./secrets:/run/tellor-secrets:ro
+    networks:
+      - monitors
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+networks:
+  monitors:
+    driver: bridge

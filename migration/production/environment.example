@@ -1,0 +1,28 @@
+# Copy this file to migration/.env.production and set mode 0600.
+# Never commit the populated file.
+
+TELLOR_RUNTIME_UID=1000
+TELLOR_RUNTIME_GID=1000
+TELLOR_ALERT_DELIVERY_MODE=log-only
+ALERT_GATE_SECOND_READ_DELAY=30
+ALERT_GATE_POLL_INTERVAL=5
+
+# OpenZeppelin Monitor and alert-gate primary provider.
+RPC_ETHEREUM_MAINNET=
+# Required independent provider for M9-M11 agreement.
+RPC_ETHEREUM_MAINNET_SECONDARY=
+RPC_ETHEREUM_MAINNET_NAME=ethereum-primary
+RPC_ETHEREUM_MAINNET_SECONDARY_NAME=ethereum-secondary
+
+# Historical EVMCall source chains. Ethereum uses the primary URL above.
+RPC_OPTIMISM=
+RPC_GNOSIS=
+RPC_POLYGON=
+RPC_CHIADO=
+RPC_SEPOLIA=
+
+TELLOR_LAYER_URL=https://mainnet.tellorlayer.com
+
+# This must be exactly one greater than the previous_height in the verified
+# M4 bridge-ledger and M8 minter seeds.
+LAYER_REPLAY_START_HEIGHT=

@@ -1,0 +1,30 @@
+.env
+.env.*
+.env~
+!.env.example
+migration/data/
+migration/logs/
+migration/runtime/
+migration/secrets/
+# Local-only EC2 and agent-operations materials; never include in deployment archives.
+migration/.local/
+node_modules/
+.DS_Store
+__pycache__/
+
+# Superseded runbooks and explicitly retired local artifacts.
+archive/
+
+# Revision 7 private runtime and execution material.
+**/.env
+**/.env.*
+**/*.env
+**/*.env.*
+/migration/evidence/
+/migration/worklog/
+/migration/credentials/
+/migration/private/
+/.skill-work/
+/.codex/
+/.pi/
+/.cursor/

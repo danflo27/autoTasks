@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "monitors": [
+    {"id": "M1", "slug": "tellormaster-control", "severity": "P0", "kind": "evm"},
+    {"id": "M2", "slug": "bridge-control", "severity": "P0", "kind": "evm"},
+    {"id": "M3", "slug": "databridge-integrity", "severity": "P0", "kind": "evm-and-scheduled"},
+    {"id": "M4", "slug": "bridge-ledger-integrity", "severity": "P0", "kind": "evm-and-layer"},
+    {"id": "M5", "slug": "tellorflex-value-integrity", "severity": "P1", "kind": "evm"},
+    {"id": "M6", "slug": "databank-value-integrity", "severity": "P0", "kind": "evm-and-layer"},
+    {"id": "M7", "slug": "governance-dispute", "severity": "P1", "kind": "evm-and-layer"},
+    {"id": "M8", "slug": "issuance-integrity", "severity": "P0", "kind": "evm-and-layer"},
+    {"id": "M9", "slug": "tellorflex-eth-usd-freshness", "severity": "P1", "kind": "scheduled"},
+    {"id": "M10", "slug": "tellorflex-ampl-usd-deadline", "severity": "P1", "kind": "scheduled"},
+    {"id": "M11", "slug": "tellorflex-uspce-deadline", "severity": "P1", "kind": "scheduled"}
+  ]
+}
