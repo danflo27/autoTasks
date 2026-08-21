@@ -79,7 +79,7 @@ class Finding:
     def message(self):
         point_label = "block" if self.chain_point.chain == "ethereum" else "height"
         lines = [
-            "**[{}] {} {}**".format(self.severity, self.monitor_id, self.slug),
+            "**{}**".format(self.slug),
             "Failed predicate: {}".format(self.predicate),
             "Chain: {}".format(self.chain_point.chain),
             "Finalized {}: {} ({})".format(
@@ -95,7 +95,6 @@ class Finding:
                 "Expected: {}".format(_compact(self.expected)),
                 "Observed: {}".format(_compact(self.observed)),
                 "Incident: {}".format(self.incident_key),
-                "First seen: {}".format(self.first_seen),
             ]
         )
         if self.chain_point.chain == "ethereum" and self.transaction_hash:
@@ -108,9 +107,7 @@ class Finding:
             lines.append("Correlated failed predicates:")
             for related in self.related_findings:
                 lines.append(
-                    "- [{}] {} {}: {}".format(
-                        related["severity"],
-                        related["monitor_id"],
+                    "- {}: {}".format(
                         related["slug"],
                         related["predicate"],
                     )
@@ -126,10 +123,8 @@ class Finding:
 
     def _compact_message(self):
         point_label = "block" if self.chain_point.chain == "ethereum" else "height"
-        lines = [
-            "**[{}] {} {}**".format(
-                self.severity, self.monitor_id, self.slug
-            ),
+        prefix_lines = [
+            "**{}**".format(self.slug),
             "Failed predicate: {}".format(_clip(self.predicate, 180)),
             "Chain: {}".format(self.chain_point.chain),
             "Finalized {}: {} ({})".format(
@@ -139,37 +134,46 @@ class Finding:
             ),
         ]
         if self.transaction_hash:
-            lines.append("Transaction: {}".format(self.transaction_hash))
-        lines.append("Incident: {}".format(self.incident_key))
+            prefix_lines.append("Transaction: {}".format(self.transaction_hash))
+        prefix_lines.append("Incident: {}".format(self.incident_key))
         if self.related_findings:
-            lines.append("Correlated failed predicates:")
+            prefix_lines.append("Correlated failed predicates:")
             for related in self.related_findings:
-                lines.append(
-                    "- [{}] {} {}: {}".format(
-                        related["severity"],
-                        related["monitor_id"],
+                prefix_lines.append(
+                    "- {}: {}".format(
                         related["slug"],
                         _clip(related["predicate"], 100),
                     )
                 )
-        lines.append("First actions:")
-        lines.append(
-            "- {}: {}".format(self.monitor_id, _clip(FIRST_ACTIONS[self.slug], 160))
+        tail_lines = ["First actions:"]
+        tail_lines.append(
+            "- {}: {}".format(self.slug, _clip(FIRST_ACTIONS[self.slug], 160))
         )
         seen = {self.slug}
         for related in self.related_findings:
             if related["slug"] in seen:
                 continue
             seen.add(related["slug"])
-            lines.append(
+            tail_lines.append(
                 "- {}: {}".format(
-                    related["monitor_id"],
+                    related["slug"],
                     _clip(FIRST_ACTIONS[related["slug"]], 160),
                 )
             )
-        lines.append("Full evidence: retained in the local incident ledger")
-        message = "\n".join(lines)
-        return message[:2000]
+        tail_lines.append("Full evidence: retained in the local incident ledger")
+
+        tail_length = len("\n".join(tail_lines))
+        prefix_budget = max(0, 2000 - tail_length - 1)
+        selected_prefix = []
+        selected_length = 0
+        for line in prefix_lines:
+            line_length = len(line) + (1 if selected_prefix else 0)
+            if selected_length + line_length > prefix_budget:
+                break
+            selected_prefix.append(line)
+            selected_length += line_length
+
+        return "\n".join(selected_prefix + tail_lines)
 
     def as_dict(self):
         return {
